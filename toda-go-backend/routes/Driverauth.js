@@ -1,44 +1,73 @@
 const express = require("express");
 const router = express.Router();
 const Driver = require("../models/Drivers");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const upload = require("../middleware/upload"); // handles multipart uploads
 
-// Register Driver
-router.post("/register-driver", async (req, res) => {
-  try {
-    const { name, email, password, licenseNumber, vehicleType, address } = req.body;
+// Register Driver (with optional selfie)
+router.post(
+  "/register-driver",
+  upload.fields([
+    { name: "votersIDImage", maxCount: 1 },
+    { name: "driversLicenseImage", maxCount: 1 },
+    { name: "orcrImage", maxCount: 1 },
+    { name: "selfieImage", maxCount: 1 }, // Optional
+  ]),
+  async (req, res) => {
+    try {
+      const {
+        isSamePerson,
+        franchiseNumber,
+        todaName,
+        sector,
+        operatorName,
+        operatorVotersID,
+        operatorAddress,
+        operatorPhone,
+        driverName,
+        driverVotersID,
+        driverAddress,
+        driverPhone,
+        experienceYears,
+        isLucenaVoter,
+        votingLocation,
+        commentOrSuggestion,
+      } = req.body;
 
-    const existing = await Driver.findOne({ email });
-    if (existing) {
-      return res.status(400).json({ error: "Driver already exists" });
+      // Required file validations
+      if (!req.files.votersIDImage) {
+        return res.status(400).json({ error: "Voter's ID image is required" });
+      }
+
+      const newDriver = new Driver({
+        isSamePerson: isSamePerson === "true", // form data is string
+        franchiseNumber,
+        todaName,
+        sector,
+        operatorName,
+        operatorVotersID,
+        operatorAddress,
+        operatorPhone,
+        driverName,
+        driverVotersID,
+        driverAddress,
+        driverPhone,
+        experienceYears,
+        isLucenaVoter,
+        votingLocation,
+        commentOrSuggestion,
+        votersIDImage: req.files.votersIDImage[0].path,
+        driversLicenseImage: req.files.driversLicenseImage?.[0]?.path,
+        orcrImage: req.files.orcrImage?.[0]?.path,
+        selfieImage: req.files.selfieImage?.[0]?.path,
+      });
+
+      await newDriver.save();
+      res.status(201).json({ message: "Driver registered successfully!" });
+    } catch (error) {
+      console.error("Driver registration failed:", error);
+      res.status(500).json({ error: "Server error", details: error.message });
     }
-
-    const newDriver = new Driver({ name, email, password, licenseNumber, vehicleType, address });
-    await newDriver.save();
-    res.status(201).json({ message: "Driver registered successfully" });
-  } catch (error) {
-    res.status(400).json({ error: "Driver registration failed", details: error });
   }
-});
-
-// Login Driver
-router.post("/login-driver", async (req, res) => {
-  const { email, password } = req.body;
-  const driver = await Driver.findOne({ email });
-  if (!driver) {
-    return res.status(401).json({ error: "Driver not found" });
-  }
-
-  const isMatch = await bcrypt.compare(password, driver.password);
-  if (!isMatch) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-
-  const payload = { id: driver.id, name: driver.name };
-  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
-
-  res.status(200).json({ message: "Driver login successful", token });
-});
+);
 
 module.exports = router;
