@@ -7,10 +7,10 @@ const upload = require("../middleware/upload"); // handles multipart uploads
 router.post(
   "/register-driver",
   upload.fields([
+    { name: "selfie", maxCount: 1 },
     { name: "votersIDImage", maxCount: 1 },
     { name: "driversLicenseImage", maxCount: 1 },
-    { name: "orcrImage", maxCount: 1 },
-    { name: "selfieImage", maxCount: 1 }, // Optional
+    { name: "orcrImage", maxCount: 1 }
   ]),
   async (req, res) => {
     try {
