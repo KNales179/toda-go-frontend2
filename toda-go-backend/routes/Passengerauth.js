@@ -33,6 +33,7 @@ router.post("/register-passenger", async (req, res) => {
     await passenger.save();
     res.status(201).json({ message: "Passenger registered successfully" });
   } catch (error) {
+    console.error("Registration failed:", error);
     res.status(500).json({ error: "Server error", details: error.message });
   }
 });
