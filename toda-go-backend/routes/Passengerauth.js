@@ -8,9 +8,9 @@ const jwt = require("jsonwebtoken");
 router.post("/register-passenger", async (req, res) => {
   try {
     const {
-      firstname,
-      middlename,
-      lastname,
+      firstName,
+      middleName,
+      lastName,
       birthday,
       email,
       password,
@@ -22,9 +22,9 @@ router.post("/register-passenger", async (req, res) => {
     }
 
     passenger = new Passenger({
-      firstname,
-      middlename,
-      lastname,
+      firstName,
+      middleName,
+      lastName,
       birthday,
       email,
       password,
