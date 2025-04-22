@@ -3,16 +3,16 @@ const bcrypt = require("bcryptjs");
 
 const passengerSchema = new mongoose.Schema({
   citizen_id: {
-    type: String, // UUID to align with Citizen schema
+    type: String, 
   },
   license_Id: {
     type: String,
   },
-  firstName: { type: String },
-  middleName: { type: String },
-  lastName: { type: String },
+  firstName: { type: String, required: true },
+  middleName: { type: String, required: true },
+  lastName: { type: String, required: true },
   suffix: { type: String },
-  birthday: { type: Date },
+  birthday: { type: Date, required: true },
   birth_place: { type: String },
   age: { type: Number },
   address: { type: String },
