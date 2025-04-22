@@ -12,7 +12,7 @@ const passengerSchema = new mongoose.Schema({
   middleName: { type: String, required: true },
   lastName: { type: String, required: true },
   suffix: { type: String },
-  birthday: { type: Date, required: true },
+  birthday: { type: Date},
   birth_place: { type: String },
   age: { type: Number },
   address: { type: String },
