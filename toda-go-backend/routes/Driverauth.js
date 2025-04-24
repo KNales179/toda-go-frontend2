@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const bcrypt = require("bcryptjs");
-const Driver = require("../models/Driver");
+const Driver = require("../models/Drivers");
 const Operator = require("../models/Operator");
 const upload = require("../middleware/upload");
 
