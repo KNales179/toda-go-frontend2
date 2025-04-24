@@ -1,78 +1,31 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
 const DriverSchema = new mongoose.Schema({
-  citizen_id: {
-    type: String, // Matches UUID from external Citizen table
-  },
-  license_Id: {
-    type: String, // Optional: links to Citizen table
-  },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
 
-  isSamePerson: {
-    type: Boolean,
-    required: true,
-  },
+  citizen_id: { type: String },
+  license_Id: { type: String },
 
-  // Shared info
-  franchiseNumber: {
-    type: String,
-    required: true,
-  },
-  todaName: {
-    type: String,
-    required: true,
-  },
+  franchiseNumber: { type: String, required: true },
+  todaName: { type: String, required: true },
   sector: {
     type: String,
     enum: ["East", "West", "North", "South", "Other"],
     required: true,
   },
 
-  // Operator details
-  operatorName: {
-    type: String,
-    required: true,
-  },
-  operatorAddress: {
-    type: String,
-    required: true,
-  },
-  operatorPhone: {
-    type: String,
-    required: true,
-  },
-  operatorVotersID: {
-    type: String,
-    required: true,
-  },
+  driverFirstName: { type: String, required: true },
+  driverMiddleName: { type: String, required: true },
+  driverLastName: { type: String, required: true },
+  driverSuffix: { type: String },
+  driverName: { type: String, required: true },
+  driverBirthdate: { type: String, required: true },
+  driverPhone: { type: String, required: true },
+  driverAddress: { type: String, required: true },
+  driverVotersID: { type: String, required: true },
 
-  // Driver details
-  driverName: {
-    type: String,
-    required: function () {
-      return this.isSamePerson === false;
-    },
-  },
-  driverAddress: {
-    type: String,
-    required: function () {
-      return this.isSamePerson === false;
-    },
-  },
-  driverPhone: {
-    type: String,
-    required: function () {
-      return this.isSamePerson === false;
-    },
-  },
-  driverVotersID: {
-    type: String,
-    required: function () {
-      return this.isSamePerson === false;
-    },
-  },
-
-  // Experience and voting
   experienceYears: {
     type: String,
     enum: ["1-5 taon", "6-10 taon", "16-20 taon", "20 taon pataas", "Other"],
@@ -83,28 +36,21 @@ const DriverSchema = new mongoose.Schema({
     enum: ["Oo", "Hindi", "Other"],
     required: true,
   },
-  votingLocation: {
-    type: String,
-  },
+  votingLocation: { type: String },
 
-  // Uploaded images
-  votersIDImage: {
-    type: String,
-    required: true,
-  },
-  driversLicenseImage: {
-    type: String,
-  },
-  orcrImage: {
-    type: String,
-  },
-  selfieImage: {
-    type: String,
-  },
+  votersIDImage: { type: String, required: true },
+  driversLicenseImage: { type: String },
+  orcrImage: { type: String },
+  selfieImage: { type: String },
 
-  commentOrSuggestion: {
-    type: String,
-  },
 }, { timestamps: true });
+
+// Hash password before saving
+DriverSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
 
 module.exports = mongoose.model("Driver", DriverSchema);
