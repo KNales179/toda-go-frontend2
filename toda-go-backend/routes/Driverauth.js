@@ -1,6 +1,6 @@
+// ✅ Driverauth.js (Fixed)
 const express = require("express");
 const router = express.Router();
-const bcrypt = require("bcryptjs");
 const Driver = require("../models/Drivers");
 const Operator = require("../models/Operator");
 const upload = require("../middleware/upload");
@@ -16,9 +16,9 @@ router.post(
   async (req, res) => {
     try {
       const {
-        role, // "Driver", "Operator", or "Both"
-        citizen_id,
-        license_Id,
+        role,
+        email,
+        password,
 
         franchiseNumber,
         todaName,
@@ -30,9 +30,6 @@ router.post(
         operatorSuffix,
         operatorBirthdate,
         operatorPhone,
-        operatorVotersID,
-        operatorEmail,
-        operatorPassword,
 
         driverFirstName,
         driverMiddleName,
@@ -40,9 +37,6 @@ router.post(
         driverSuffix,
         driverBirthdate,
         driverPhone,
-        driverVotersID,
-        driverEmail,
-        driverPassword,
 
         experienceYears,
         isLucenaVoter,
@@ -58,17 +52,13 @@ router.post(
       const driversLicenseImage = req.files.driversLicenseImage?.[0]?.path;
       const orcrImage = req.files.orcrImage?.[0]?.path;
 
-      const operatorName = `${operatorFirstName} ${operatorMiddleName} ${operatorLastName} ${operatorSuffix || ""}`.trim();
-      const driverName = `${driverFirstName} ${driverMiddleName} ${driverLastName} ${driverSuffix || ""}`.trim();
-
       if (role === "Operator" || role === "Both") {
-        const operatorExists = await Operator.findOne({ email: operatorEmail });
+        const operatorExists = await Operator.findOne({ email });
         if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
 
-        const hashedPassword = await bcrypt.hash(operatorPassword, 10);
         const newOperator = new Operator({
-          citizen_id,
-          license_Id,
+          email,
+          password,
           franchiseNumber,
           todaName,
           sector,
@@ -76,31 +66,25 @@ router.post(
           operatorMiddleName,
           operatorLastName,
           operatorSuffix,
+          operatorName: `${operatorFirstName} ${operatorMiddleName} ${operatorLastName} ${operatorSuffix || ""}`.trim(),
           operatorBirthdate,
-          operatorName,
           operatorPhone,
-          operatorVotersID,
-          email: operatorEmail,
-          password: hashedPassword,
-          isLucenaVoter,
-          votingLocation,
-          selfieImage,
           votersIDImage,
           driversLicenseImage,
           orcrImage,
+          selfieImage,
         });
 
         await newOperator.save();
       }
 
       if (role === "Driver" || role === "Both") {
-        const driverExists = await Driver.findOne({ email: driverEmail });
+        const driverExists = await Driver.findOne({ email });
         if (driverExists) return res.status(400).json({ error: "Driver already exists" });
 
-        const hashedPassword = await bcrypt.hash(driverPassword, 10);
         const newDriver = new Driver({
-          citizen_id,
-          license_Id,
+          email,
+          password,
           franchiseNumber,
           todaName,
           sector,
@@ -108,19 +92,16 @@ router.post(
           driverMiddleName,
           driverLastName,
           driverSuffix,
+          driverName: `${driverFirstName} ${driverMiddleName} ${driverLastName} ${driverSuffix || ""}`.trim(),
           driverBirthdate,
-          driverName,
           driverPhone,
-          driverVotersID,
-          email: driverEmail,
-          password: hashedPassword,
           experienceYears,
           isLucenaVoter,
           votingLocation,
-          selfieImage,
           votersIDImage,
           driversLicenseImage,
           orcrImage,
+          selfieImage,
         });
 
         await newDriver.save();
