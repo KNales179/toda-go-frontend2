@@ -1,5 +1,8 @@
 // ✅ Operator.js (Fixed)
-const OperatorSchema = new mongoose.Schema({
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+
+const OperatorSchema = new mongoose.Schema({   // mongoose is already imported
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
 
@@ -15,7 +18,7 @@ const OperatorSchema = new mongoose.Schema({
   operatorBirthdate: { type: String, required: true },
   operatorPhone: { type: String, required: true },
 
-  votersIDImage: { type: String},
+  votersIDImage: { type: String, required: true },
   driversLicenseImage: { type: String },
   orcrImage: { type: String },
   selfieImage: { type: String },
