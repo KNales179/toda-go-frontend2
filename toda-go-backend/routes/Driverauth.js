@@ -15,6 +15,7 @@ router.post(
   ]),
   async (req, res) => {
     try {
+      console.log("reach backend")
       const {
         role,
         email,
