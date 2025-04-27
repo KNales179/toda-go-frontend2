@@ -19,7 +19,6 @@ router.post(
       const {
         role,
         email,
-        password,
         driverEmail,
         driverPassword,
         operatorEmail,
@@ -43,7 +42,7 @@ router.post(
         isLucenaVoter,
         votingLocation,
       } = req.body;
-      console.log(role, driverEmail, driverPassword, operatorEmail, operatorPassword);
+      console.log(email, role, driverEmail, driverPassword, operatorEmail, operatorPassword);
       if (!req.files.votersIDImage) {
         return res.status(400).json({ error: "Voter's ID image is required" });
       }
