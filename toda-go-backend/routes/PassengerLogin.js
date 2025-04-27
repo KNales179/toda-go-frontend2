@@ -1,7 +1,7 @@
 // ✅ PassengerLogin.js
 const express = require("express");
 const router = express.Router();
-const Passenger = require("../models/Passengers");
+const Passenger = require("../models/Passenger");
 const bcrypt = require("bcryptjs");
 
 // POST /api/auth/passenger/login
