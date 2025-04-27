@@ -54,17 +54,18 @@ router.post(
 
       const profileID = uuidv4();
 
-      // Check if email already exists for Driver or Operator
+      // Check if email already exists for Driver
       if (role === "Driver" || role === "Both") {
         if (driverEmail) {
-          const driverExists = await Driver.findOne({ driverEmail });
+          const driverExists = await Driver.findOne({ email: driverEmail }); 
           if (driverExists) return res.status(400).json({ error: "Driver already exists" });
         }
       }
-      
+
+      // Check if email already exists for Operator
       if (role === "Operator" || role === "Both") {
         if (operatorEmail) {
-          const operatorExists = await Operator.findOne({ operatorEmail });
+          const operatorExists = await Operator.findOne({ email: operatorEmail }); // 🛠 FIXED
           if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
         }
       }
