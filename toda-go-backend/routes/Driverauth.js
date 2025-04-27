@@ -17,9 +17,12 @@ router.post(
     try {
       console.log("reach backend");
       const {
-        role,
         email,
         password,
+        driverEmail,
+        driverPassword,
+        operatorEmail,
+        operatorPassword,
         franchiseNumber,
         todaName,
         sector,
@@ -52,20 +55,25 @@ router.post(
       const profileID = uuidv4();
 
       // Check if email already exists for Driver or Operator
-      if (role !== "Operator") {
-        const driverExists = await Driver.findOne({ email });
-        if (driverExists) return res.status(400).json({ error: "Driver already exists" });
+      if (role === "Driver" || role === "Both") {
+        if (email) {
+          const driverExists = await Driver.findOne({ email });
+          if (driverExists) return res.status(400).json({ error: "Driver already exists" });
+        }
       }
-      if (role !== "Driver") {
-        const operatorExists = await Operator.findOne({ email });
-        if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
+      
+      if (role === "Operator" || role === "Both") {
+        if (email) {
+          const operatorExists = await Operator.findOne({ email });
+          if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
+        }
       }
 
       // Create Operator
       const newOperator = new Operator({
         profileID,
-        email: (role === "Operator" || role === "Both") ? email : "",
-        password: (role === "Operator" || role === "Both") ? password : "",
+        email: role === "Operator" || role === "Both" ? operatorEmail : undefined,
+        password: role === "Operator" || role === "Both" ? operatorPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -85,8 +93,8 @@ router.post(
       // Create Driver
       const newDriver = new Driver({
         profileID,
-        email: (role === "Driver" || role === "Both") ? email : "",
-        password: (role === "Driver" || role === "Both") ? password : "",
+        email: role === "Driver" || role === "Both" ? driverEmail : undefined,
+        password: role === "Driver" || role === "Both" ? driverPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
