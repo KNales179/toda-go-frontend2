@@ -73,8 +73,8 @@ router.post(
       // Create Operator
       const newOperator = new Operator({
         profileID,
-        email: (role === "Operator" || role === "Both") ? email : "",
-        password: (role === "Operator" || role === "Both") ? password : "",
+        email: role === "Operator" || role === "Both" ? operatorEmail : undefined,
+        password: role === "Operator" || role === "Both" ? operatorPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -94,8 +94,8 @@ router.post(
       // Create Driver
       const newDriver = new Driver({
         profileID,
-        email: (role === "Driver" || role === "Both") ? email : "",
-        password: (role === "Driver" || role === "Both") ? password : "",
+        email: role === "Driver" || role === "Both" ? driverEmail : undefined,
+        password: role === "Driver" || role === "Both" ? driverPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
