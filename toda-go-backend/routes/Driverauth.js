@@ -1,10 +1,10 @@
-// ✅ Updated Driverauth.js (FULL)
+// ✅ Final Correct Driverauth.js
 const express = require("express");
 const router = express.Router();
 const Driver = require("../models/Drivers");
 const Operator = require("../models/Operator");
 const upload = require("../middleware/upload");
-const { v4: uuidv4 } = require("uuid"); // 📌 for generating profileID
+const { v4: uuidv4 } = require("uuid"); // for generating profileID
 
 router.post(
   "/register-driver",
@@ -17,10 +17,13 @@ router.post(
   async (req, res) => {
     try {
       console.log("reach backend");
+
       const {
         role,
-        email,
-        password,
+        driverEmail,
+        driverPassword,
+        operatorEmail,
+        operatorPassword,
 
         franchiseNumber,
         todaName,
@@ -54,13 +57,13 @@ router.post(
       const driversLicenseImage = req.files.driversLicenseImage?.[0]?.path;
       const orcrImage = req.files.orcrImage?.[0]?.path;
 
-      const profileID = uuidv4(); // 🔥 generate random profileID
+      const profileID = uuidv4(); // unique ID for linking Driver and Operator
 
       // Always create Operator
       const newOperator = new Operator({
         profileID,
-        email: role === "Operator" || role === "Both" ? email : undefined,
-        password: role === "Operator" || role === "Both" ? password : undefined,
+        email: operatorEmail || undefined,
+        password: operatorPassword || undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -80,8 +83,8 @@ router.post(
       // Always create Driver
       const newDriver = new Driver({
         profileID,
-        email: role === "Driver" || role === "Both" ? email : undefined,
-        password: role === "Driver" || role === "Both" ? password : undefined,
+        email: driverEmail || undefined,
+        password: driverPassword || undefined,
         franchiseNumber,
         todaName,
         sector,
