@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 
 const DriverSchema = new mongoose.Schema({
   profileID: { type: String, required: true },
-  email: { type: String, unique: true },
+  email: { type: String, unique: true, sparse: true },
   password: { type: String },
 
   franchiseNumber: { type: String, required: true },
