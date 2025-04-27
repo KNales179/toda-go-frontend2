@@ -43,6 +43,7 @@ router.post(
         isLucenaVoter,
         votingLocation,
       } = req.body;
+      console.log(driverEmail, driverPassword, operatorEmail, operatorPassword);
 
       if (!req.files.votersIDImage) {
         return res.status(400).json({ error: "Voter's ID image is required" });
