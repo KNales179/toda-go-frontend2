@@ -1,9 +1,10 @@
-// ✅ Driverauth.js (Fixed)
+// ✅ Updated Driverauth.js (FULL)
 const express = require("express");
 const router = express.Router();
 const Driver = require("../models/Drivers");
 const Operator = require("../models/Operator");
 const upload = require("../middleware/upload");
+const { v4: uuidv4 } = require("uuid"); // 📌 for generating profileID
 
 router.post(
   "/register-driver",
@@ -15,7 +16,7 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      console.log("reach backend")
+      console.log("reach backend");
       const {
         role,
         email,
@@ -53,60 +54,55 @@ router.post(
       const driversLicenseImage = req.files.driversLicenseImage?.[0]?.path;
       const orcrImage = req.files.orcrImage?.[0]?.path;
 
-      if (role === "Operator" || role === "Both") {
-        const operatorExists = await Operator.findOne({ email });
-        if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
+      const profileID = uuidv4(); // 🔥 generate random profileID
 
-        const newOperator = new Operator({
-          email,
-          password,
-          franchiseNumber,
-          todaName,
-          sector,
-          operatorFirstName,
-          operatorMiddleName,
-          operatorLastName,
-          operatorSuffix,
-          operatorName: `${operatorFirstName} ${operatorMiddleName} ${operatorLastName} ${operatorSuffix || ""}`.trim(),
-          operatorBirthdate,
-          operatorPhone,
-          votersIDImage,
-          driversLicenseImage,
-          orcrImage,
-          selfieImage,
-        });
+      // Always create Operator
+      const newOperator = new Operator({
+        profileID,
+        email: role === "Operator" || role === "Both" ? email : undefined,
+        password: role === "Operator" || role === "Both" ? password : undefined,
+        franchiseNumber,
+        todaName,
+        sector,
+        operatorFirstName,
+        operatorMiddleName,
+        operatorLastName,
+        operatorSuffix,
+        operatorName: `${operatorFirstName} ${operatorMiddleName} ${operatorLastName} ${operatorSuffix || ""}`.trim(),
+        operatorBirthdate,
+        operatorPhone,
+        votersIDImage,
+        driversLicenseImage,
+        orcrImage,
+        selfieImage,
+      });
 
-        await newOperator.save();
-      }
+      // Always create Driver
+      const newDriver = new Driver({
+        profileID,
+        email: role === "Driver" || role === "Both" ? email : undefined,
+        password: role === "Driver" || role === "Both" ? password : undefined,
+        franchiseNumber,
+        todaName,
+        sector,
+        driverFirstName,
+        driverMiddleName,
+        driverLastName,
+        driverSuffix,
+        driverName: `${driverFirstName} ${driverMiddleName} ${driverLastName} ${driverSuffix || ""}`.trim(),
+        driverBirthdate,
+        driverPhone,
+        experienceYears,
+        isLucenaVoter,
+        votingLocation,
+        votersIDImage,
+        driversLicenseImage,
+        orcrImage,
+        selfieImage,
+      });
 
-      if (role === "Driver" || role === "Both") {
-        const driverExists = await Driver.findOne({ email });
-        if (driverExists) return res.status(400).json({ error: "Driver already exists" });
-
-        const newDriver = new Driver({
-          email,
-          password,
-          franchiseNumber,
-          todaName,
-          sector,
-          driverFirstName,
-          driverMiddleName,
-          driverLastName,
-          driverSuffix,
-          driverName: `${driverFirstName} ${driverMiddleName} ${driverLastName} ${driverSuffix || ""}`.trim(),
-          driverBirthdate,
-          driverPhone,
-          experienceYears,
-          isLucenaVoter,
-          votingLocation,
-          votersIDImage,
-          driversLicenseImage,
-          orcrImage,
-          selfieImage,
-        });
-
-        await newDriver.save();
-      }
+      await newOperator.save();
+      await newDriver.save();
 
       res.status(201).json({ message: "Registration successful" });
     } catch (error) {

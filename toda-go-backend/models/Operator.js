@@ -3,8 +3,9 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const OperatorSchema = new mongoose.Schema({   // mongoose is already imported
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  profileID: { type: String, required: true },
+  email: { type: String, unique: true },
+  password: { type: String},
 
   franchiseNumber: { type: String, required: true },
   todaName: { type: String, required: true },
