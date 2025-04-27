@@ -15,10 +15,15 @@ app.use(express.json());
 // Routes
 const passengerRoutes = require("./routes/Passengerauth");
 const driverRoutes = require("./routes/Driverauth");
+const passengerLoginRoutes = require("./routes/PassengerLogin"); // 🔥 added
 
-// Use them with separate prefixes
+// Use routes
 app.use("/api/auth/passenger", passengerRoutes);
 app.use("/api/auth/driver", driverRoutes);
+app.use("/api/auth/passenger", passengerLoginRoutes); // 🔥 added
+
+// Static uploads
+app.use("/uploads", express.static("uploads"));
 
 // DB Connection
 mongoose.connect(process.env.MONGO_URI, {
@@ -33,9 +38,7 @@ app.get("/", (req, res) => {
   res.send("Welcome to the Toda-Go Backend!");
 });
 
-// Run server for local/dev
+// Run server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://Localhost:${PORT}`);
 });
-
-app.use("/uploads", express.static("uploads"));
