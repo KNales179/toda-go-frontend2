@@ -94,7 +94,7 @@ router.post(
         if (operatorPassword) {
           newDriver.password = operatorPassword
         };
-      };
+      }
 
       // Create Driver
       const newDriver = new Driver({
@@ -117,14 +117,14 @@ router.post(
         orcrImage,
         selfieImage,
       });
-      if (role === 'Driver' || role === 'Both'){
+      if (role === "Driver" || role === "Both") {
         if (driverEmail) {
-          newDriver.email = driverEmail
-        };
+          newDriver.email = driverEmail;
+        }
         if (driverPassword) {
-          newDriver.password = driverPassword
-        };
-      };
+          newDriver.password = driverPassword;
+        }
+      }
       
 
       await newOperator.save();
