@@ -1,10 +1,9 @@
-// ✅ Final Correct Driverauth.js
 const express = require("express");
 const router = express.Router();
 const Driver = require("../models/Drivers");
 const Operator = require("../models/Operator");
 const upload = require("../middleware/upload");
-const { v4: uuidv4 } = require("uuid"); // for generating profileID
+const { v4: uuidv4 } = require("uuid");
 
 router.post(
   "/register-driver",
@@ -17,32 +16,25 @@ router.post(
   async (req, res) => {
     try {
       console.log("reach backend");
-
       const {
         role,
-        driverEmail,
-        driverPassword,
-        operatorEmail,
-        operatorPassword,
-
+        email,
+        password,
         franchiseNumber,
         todaName,
         sector,
-
         operatorFirstName,
         operatorMiddleName,
         operatorLastName,
         operatorSuffix,
         operatorBirthdate,
         operatorPhone,
-
         driverFirstName,
         driverMiddleName,
         driverLastName,
         driverSuffix,
         driverBirthdate,
         driverPhone,
-
         experienceYears,
         isLucenaVoter,
         votingLocation,
@@ -57,13 +49,23 @@ router.post(
       const driversLicenseImage = req.files.driversLicenseImage?.[0]?.path;
       const orcrImage = req.files.orcrImage?.[0]?.path;
 
-      const profileID = uuidv4(); // unique ID for linking Driver and Operator
+      const profileID = uuidv4();
 
-      // Always create Operator
+      // Check if email already exists for Driver or Operator
+      if (role !== "Operator") {
+        const driverExists = await Driver.findOne({ email });
+        if (driverExists) return res.status(400).json({ error: "Driver already exists" });
+      }
+      if (role !== "Driver") {
+        const operatorExists = await Operator.findOne({ email });
+        if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
+      }
+
+      // Create Operator
       const newOperator = new Operator({
         profileID,
-        email: operatorEmail || undefined,
-        password: operatorPassword || undefined,
+        email: role === "Operator" || role === "Both" ? email : undefined,
+        password: role === "Operator" || role === "Both" ? password : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -80,21 +82,21 @@ router.post(
         selfieImage,
       });
 
-      // Always create Driver
+      // Create Driver
       const newDriver = new Driver({
         profileID,
-        email: driverEmail || undefined,
-        password: driverPassword || undefined,
+        email: role === "Driver" || role === "Both" ? email : undefined,
+        password: role === "Driver" || role === "Both" ? password : undefined,
         franchiseNumber,
         todaName,
         sector,
-        driverFirstName,
-        driverMiddleName,
-        driverLastName,
-        driverSuffix,
-        driverName: `${driverFirstName} ${driverMiddleName} ${driverLastName} ${driverSuffix || ""}`.trim(),
-        driverBirthdate,
-        driverPhone,
+        driverFirstName: role === "Both" ? operatorFirstName : driverFirstName,
+        driverMiddleName: role === "Both" ? operatorMiddleName : driverMiddleName,
+        driverLastName: role === "Both" ? operatorLastName : driverLastName,
+        driverSuffix: role === "Both" ? operatorSuffix : driverSuffix,
+        driverName: `${role === "Both" ? operatorFirstName : driverFirstName} ${role === "Both" ? operatorMiddleName : driverMiddleName} ${role === "Both" ? operatorLastName : driverLastName} ${role === "Both" ? operatorSuffix : driverSuffix || ""}`.trim(),
+        driverBirthdate: role === "Both" ? operatorBirthdate : driverBirthdate,
+        driverPhone: role === "Both" ? operatorPhone : driverPhone,
         experienceYears,
         isLucenaVoter,
         votingLocation,
