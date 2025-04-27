@@ -43,7 +43,7 @@ router.post(
         isLucenaVoter,
         votingLocation,
       } = req.body;
-
+      console.log(role, driverEmail, driverPassword, operatorEmail, operatorPassword);
       if (!req.files.votersIDImage) {
         return res.status(400).json({ error: "Voter's ID image is required" });
       }
@@ -73,8 +73,6 @@ router.post(
       // Create Operator
       const newOperator = new Operator({
         profileID,
-        email: role === "Operator" || role === "Both" ? operatorEmail : undefined,
-        password: role === "Operator" || role === "Both" ? operatorPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -90,12 +88,18 @@ router.post(
         orcrImage,
         selfieImage,
       });
+      if (role === 'Operator' || role === 'Both'){
+        if (operatorEmail) {
+          newDriver.email = operatorEmail
+        };
+        if (operatorPassword) {
+          newDriver.password = operatorPassword
+        };
+      };
 
       // Create Driver
       const newDriver = new Driver({
         profileID,
-        email: role === "Driver" || role === "Both" ? driverEmail : undefined,
-        password: role === "Driver" || role === "Both" ? driverPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -114,6 +118,15 @@ router.post(
         orcrImage,
         selfieImage,
       });
+      if (role === 'Driver' || role === 'Both'){
+        if (driverEmail) {
+          newDriver.email = driverEmail
+        };
+        if (driverPassword) {
+          newDriver.password = driverPassword
+        };
+      };
+      
 
       await newOperator.save();
       await newDriver.save();
