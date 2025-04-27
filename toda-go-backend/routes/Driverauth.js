@@ -87,13 +87,13 @@ router.post(
         orcrImage,
         selfieImage,
       });
-      if (role === 'Operator' || role === 'Both'){
+      if (role === "Operator" || role === "Both") {
         if (operatorEmail) {
-          newDriver.email = operatorEmail
-        };
+          newOperator.email = operatorEmail;
+        }
         if (operatorPassword) {
-          newDriver.password = operatorPassword
-        };
+          newOperator.password = operatorPassword;
+        }
       }
 
       // Create Driver
