@@ -15,37 +15,34 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      console.log("reach backend ✅");
+      console.log("reach backend");
       const {
         role,
+        email,
+        password,
         driverEmail,
         driverPassword,
         operatorEmail,
         operatorPassword,
-
         franchiseNumber,
         todaName,
         sector,
-
         operatorFirstName,
         operatorMiddleName,
         operatorLastName,
         operatorSuffix,
         operatorBirthdate,
         operatorPhone,
-
         driverFirstName,
         driverMiddleName,
         driverLastName,
         driverSuffix,
         driverBirthdate,
         driverPhone,
-
         experienceYears,
         isLucenaVoter,
         votingLocation,
       } = req.body;
-      console.log(role, driverEmail, driverPassword, operatorEmail, operatorPassword);
 
       if (!req.files.votersIDImage) {
         return res.status(400).json({ error: "Voter's ID image is required" });
@@ -56,22 +53,28 @@ router.post(
       const driversLicenseImage = req.files.driversLicenseImage?.[0]?.path;
       const orcrImage = req.files.orcrImage?.[0]?.path;
 
-      const profileID = uuidv4(); // 🔥 generate profile ID
+      const profileID = uuidv4();
 
-      // 🔥 Only check email if provided (prevent null duplicate error)
-      if (driverEmail) {
-        const driverExists = await Driver.findOne({ email: driverEmail });
-        if (driverExists) return res.status(400).json({ error: "Driver already exists" });
+      // Check if email already exists for Driver or Operator
+      if (role === "Driver" || role === "Both") {
+        if (email) {
+          const driverExists = await Driver.findOne({ email });
+          if (driverExists) return res.status(400).json({ error: "Driver already exists" });
+        }
+      }
+      
+      if (role === "Operator" || role === "Both") {
+        if (email) {
+          const operatorExists = await Operator.findOne({ email });
+          if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
+        }
       }
 
-      if (operatorEmail) {
-        const operatorExists = await Operator.findOne({ email: operatorEmail });
-        if (operatorExists) return res.status(400).json({ error: "Operator already exists" });
-      }
-
-      // 🏗️ Build Operator Data
-      const operatorData = {
+      // Create Operator
+      const newOperator = new Operator({
         profileID,
+        email: role === "Operator" || role === "Both" ? operatorEmail : undefined,
+        password: role === "Operator" || role === "Both" ? operatorPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -86,17 +89,13 @@ router.post(
         driversLicenseImage,
         orcrImage,
         selfieImage,
-      };
+      });
 
-      if (role === "Operator" || role === "Both") {
-        operatorData.email = operatorEmail;
-        operatorData.password = operatorPassword;
-        console.log(operatorData.email, email)
-      }
-
-      // 🏗️ Build Driver Data
-      const driverData = {
+      // Create Driver
+      const newDriver = new Driver({
         profileID,
+        email: role === "Driver" || role === "Both" ? driverEmail : undefined,
+        password: role === "Driver" || role === "Both" ? driverPassword : undefined,
         franchiseNumber,
         todaName,
         sector,
@@ -114,16 +113,7 @@ router.post(
         driversLicenseImage,
         orcrImage,
         selfieImage,
-      };
-
-      if (role === "Driver" || role === "Both") {
-        driverData.email = driverEmail;
-        driverData.password = driverPassword;
-        console.log(driverData.email, email)
-      }
-
-      const newOperator = new Operator(operatorData);
-      const newDriver = new Driver(driverData);
+      });
 
       await newOperator.save();
       await newDriver.save();
