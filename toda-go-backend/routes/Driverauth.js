@@ -45,6 +45,7 @@ router.post(
         isLucenaVoter,
         votingLocation,
       } = req.body;
+      console.log(role, driverEmail, driverPassword, operatorEmail, operatorPassword);
 
       if (!req.files.votersIDImage) {
         return res.status(400).json({ error: "Voter's ID image is required" });
@@ -90,6 +91,7 @@ router.post(
       if (role === "Operator" || role === "Both") {
         operatorData.email = operatorEmail;
         operatorData.password = operatorPassword;
+        console.log(operatorData.email, email)
       }
 
       // 🏗️ Build Driver Data
@@ -117,6 +119,7 @@ router.post(
       if (role === "Driver" || role === "Both") {
         driverData.email = driverEmail;
         driverData.password = driverPassword;
+        console.log(driverData.email, email)
       }
 
       const newOperator = new Operator(operatorData);
