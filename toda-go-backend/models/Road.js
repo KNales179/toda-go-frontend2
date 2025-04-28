@@ -7,14 +7,12 @@ const RoadSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  startPoint: {
-    lat: { type: Number, required: true },
-    lng: { type: Number, required: true }
-  },
-  endPoint: {
-    lat: { type: Number, required: true },
-    lng: { type: Number, required: true }
-  },
+  path: [
+    {
+      lat: { type: Number, required: true },
+      lng: { type: Number, required: true }
+    }
+  ],
   oneWay: {
     type: Boolean,
     default: false
