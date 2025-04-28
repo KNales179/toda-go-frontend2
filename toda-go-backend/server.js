@@ -15,12 +15,14 @@ app.use(express.json());
 // Routes
 const passengerRoutes = require("./routes/Passengerauth");
 const driverRoutes = require("./routes/Driverauth");
-const passengerLoginRoutes = require("./routes/PassengerLogin"); // 🔥 added
+const passengerLoginRoutes = require("./routes/PassengerLogin"); 
+const driverLoginRoutes = require("./routes/DriverLogin");
 
 // Use routes
 app.use("/api/auth/passenger", passengerRoutes);
 app.use("/api/auth/driver", driverRoutes);
-app.use("/api/auth/passenger", passengerLoginRoutes); // 🔥 added
+app.use("/api/login/passenger", passengerLoginRoutes);
+app.use("/api/login/driver", driverLoginRoutes);
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));
