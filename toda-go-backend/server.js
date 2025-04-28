@@ -18,6 +18,7 @@ const driverRoutes = require("./routes/Driverauth");
 const passengerLoginRoutes = require("./routes/PassengerLogin"); 
 const driverLoginRoutes = require("./routes/DriverLogin");
 const RoadRoutes = require('./routes/RoadRoutes');
+const AdminAuthRoutes = require('./routes/Adminauth');
 
 // Use routes
 app.use("/api/auth/passenger", passengerRoutes);
@@ -25,6 +26,7 @@ app.use("/api/auth/driver", driverRoutes);
 app.use("/api/login/passenger", passengerLoginRoutes);
 app.use("/api/login/driver", driverLoginRoutes);
 app.use('/api/road', RoadRoutes);
+app.use('/api/admin', AdminAuthRoutes);
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));
