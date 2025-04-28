@@ -17,12 +17,14 @@ const passengerRoutes = require("./routes/Passengerauth");
 const driverRoutes = require("./routes/Driverauth");
 const passengerLoginRoutes = require("./routes/PassengerLogin"); 
 const driverLoginRoutes = require("./routes/DriverLogin");
+const RoadRoutes = require('./routes/RoadRoutes');
 
 // Use routes
 app.use("/api/auth/passenger", passengerRoutes);
 app.use("/api/auth/driver", driverRoutes);
 app.use("/api/login/passenger", passengerLoginRoutes);
 app.use("/api/login/driver", driverLoginRoutes);
+app.use('/api/road', RoadRoutes);
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));
