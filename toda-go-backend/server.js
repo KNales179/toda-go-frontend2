@@ -19,6 +19,8 @@ const passengerLoginRoutes = require("./routes/PassengerLogin");
 const driverLoginRoutes = require("./routes/DriverLogin");
 const RoadRoutes = require('./routes/RoadRoutes');
 const AdminAuthRoutes = require('./routes/Adminauth');
+const IntersectionRoutes = require('./routes/IntersectionRoutes');
+
 
 // Use routes
 app.use("/api/auth/passenger", passengerRoutes);
@@ -27,6 +29,8 @@ app.use("/api/login/passenger", passengerLoginRoutes);
 app.use("/api/login/driver", driverLoginRoutes);
 app.use('/api/road', RoadRoutes);
 app.use('/api/admin', AdminAuthRoutes);
+app.use('/api/intersection', IntersectionRoutes);
+
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));
