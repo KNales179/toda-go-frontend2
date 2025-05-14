@@ -78,11 +78,15 @@ router.post('/book', async (req, res) => {
     console.log("📥 Booking stored with driver match:", bookingData);
 
     return res.status(200).json({
-      message: "Booking matched with driver!",
-      booking: bookingData,
-      matchedDriverId: nearestDriver.driverId,
-      distance: shortestDistance.toFixed(2),
+        message: "Booking matched with driver!",
+        booking: {
+            ...bookingData,
+            driverId: nearestDriver.driverId, // ensure it's inside the booking object
+        },
+        distance: shortestDistance.toFixed(2),
     });
+
+
 
   } catch (error) {
     console.error("❌ Error during booking:", error);
