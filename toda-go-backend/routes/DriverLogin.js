@@ -39,6 +39,7 @@ router.post("/login", async (req, res) => {
           message: "Login successful",
           userType: "Both",
           userId: driver._id,
+          driver: driver, // Include full driver data
         });
       } else {
         return res.status(400).json({ error: "Conflict: Profile IDs do not match" });
@@ -50,6 +51,7 @@ router.post("/login", async (req, res) => {
         message: "Login successful",
         userType: "Driver",
         userId: driver._id,
+        driver: driver, // Include full driver data
       });
     }
 
@@ -58,6 +60,7 @@ router.post("/login", async (req, res) => {
         message: "Login successful",
         userType: "Operator",
         userId: operator._id,
+        operator: operator, // Include full operator data
       });
     }
 
