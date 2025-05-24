@@ -1,0 +1,38 @@
+{
+    "sourceFile": "app/_layout.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 5,
+            "patches": [
+                {
+                    "date": 1742703388027,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1742703412490,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,15 +1,9 @@\n import { Stack } from \"expo-router\";\n \n export default function RootLayout() {\n \n-return ( // Added return statement\n-\n-<Stack screenOptions={{ headerShown: false }}>\n-\n-{/* Your screens will be rendered here */}\n-\n-</Stack>\n-\n-);\n-\n+return ( \n+    <Stack screenOptions={{ headerShown: false }}>\n+    </Stack>\n+  );\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1743947440317,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -2,8 +2,8 @@\n \n export default function RootLayout() {\n \n return ( \n-    <Stack screenOptions={{ headerShown: false }}>\n+    <Stack screenOptions={{ headerShown: true }}>\n     </Stack>\n   );\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1743947596286,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -2,8 +2,8 @@\n \n export default function RootLayout() {\n \n return ( \n-    <Stack screenOptions={{ headerShown: true }}>\n+    <Stack screenOptions={{ headerShown: false }}>\n     </Stack>\n   );\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1745807696929,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,9 +1,12 @@\n-import { Stack } from \"expo-router\";\n-\n-export default function RootLayout() {\n-\n-return ( \n-    <Stack screenOptions={{ headerShown: false }}>\n-    </Stack>\n-  );\n+import { Stack } from \"expo-router\";\r\n+import { LocationProvider } from \"../location/GlobalLocation\"; \r\n+\r\n+export default function RootLayout() {\r\n+\r\n+return ( \r\n+    <LocationProvider>\r\n+      <Stack screenOptions={{ headerShown: false }}>\r\n+      </Stack>\r\n+    </LocationProvider>\r\n+  );\r\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1745807727014,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,6 +1,6 @@\n import { Stack } from \"expo-router\";\r\n-import { LocationProvider } from \"../location/GlobalLocation\"; \r\n+import { LocationProvider } from \"./location/GlobalLocation\"; \r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n"
+                }
+            ],
+            "date": 1742703388027,
+            "name": "Commit-0",
+            "content": "import { Stack } from \"expo-router\";\n\nexport default function RootLayout() {\n\nreturn ( // Added return statement\n\n<Stack screenOptions={{ headerShown: false }}>\n\n{/* Your screens will be rendered here */}\n\n</Stack>\n\n);\n\n}"
+        }
+    ]
+}

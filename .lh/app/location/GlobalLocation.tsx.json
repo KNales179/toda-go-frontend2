@@ -1,0 +1,18 @@
+{
+    "sourceFile": "app/location/GlobalLocation.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1745805355648,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1745805355648,
+            "name": "Commit-0",
+            "content": "import React, { createContext, useState, useEffect, useContext } from \"react\";\r\nimport * as Location from \"expo-location\";\r\n\r\n// 1. Create Context\r\nconst LocationContext = createContext<{\r\n  location: { latitude: number; longitude: number } | null;\r\n  loading: boolean;\r\n}>({\r\n  location: null,\r\n  loading: true,\r\n});\r\n\r\n// 2. Provider Component\r\nexport const LocationProvider = ({ children }: { children: React.ReactNode }) => {\r\n  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);\r\n  const [loading, setLoading] = useState(true);\r\n\r\n  useEffect(() => {\r\n    (async () => {\r\n      try {\r\n        const { status } = await Location.requestForegroundPermissionsAsync();\r\n        if (status !== \"granted\") {\r\n          console.warn(\"Permission to access location was denied\");\r\n          setLoading(false);\r\n          return;\r\n        }\r\n        const loc = await Location.getCurrentPositionAsync({});\r\n        setLocation({\r\n          latitude: loc.coords.latitude,\r\n          longitude: loc.coords.longitude,\r\n        });\r\n      } catch (error) {\r\n        console.error(\"Error getting location:\", error);\r\n      } finally {\r\n        setLoading(false);\r\n      }\r\n    })();\r\n  }, []);\r\n\r\n  return (\r\n    <LocationContext.Provider value={{ location, loading }}>\r\n      {children}\r\n    </LocationContext.Provider>\r\n  );\r\n};\r\n\r\n// 3. Custom Hook\r\nexport const useLocation = () => useContext(LocationContext);\r\n"
+        }
+    ]
+}

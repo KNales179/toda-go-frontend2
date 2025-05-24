@@ -1,0 +1,22 @@
+{
+    "sourceFile": "app/location/welcome.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 1,
+            "patches": [
+                {
+                    "date": 1743946995278,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1743947054241,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -16,9 +16,9 @@\n                     <Text style={styles.buttonText} onPress={() => router.push(\"../login_and_reg/dlogin\")}>DRIVER</Text>\r\n                 </TouchableOpacity>\r\n                 <Text style={styles.orText}>or</Text>\r\n                 <TouchableOpacity style={styles.button}>\r\n-                    <Text style={styles.buttonText} onPress={() => router.push(\"../login_and_reg/plogin\")}>PASSENGER</Text>\r\n+                    <Text style={styles.buttonText} onPress={() => router.push(\"/login_and_reg/plogin\")}>PASSENGER</Text>\r\n                 </TouchableOpacity>\r\n             </View>\r\n         </View>\r\n     );\r\n"
+                }
+            ],
+            "date": 1743946995278,
+            "name": "Commit-0",
+            "content": "import React from \"react\";\r\nimport { View, Text, TouchableOpacity, StyleSheet, Dimensions } from \"react-native\";\r\nimport { useRouter } from \"expo-router\";\r\n\r\nconst { width } = Dimensions.get(\"window\");\r\n\r\nexport default function welcome() {\r\n    const router = useRouter();\r\n    return (\r\n        <View style={styles.container}>\r\n            <View style={styles.content}>\r\n                <Text style={styles.title}>Welcome to TODAGo</Text>\r\n                <Text style={styles.subtitle}>Tricycle ride in Lucena made easy</Text>\r\n                <Text style={styles.question}>Are you a</Text>\r\n                <TouchableOpacity style={styles.button}>\r\n                    <Text style={styles.buttonText} onPress={() => router.push(\"../login_and_reg/dlogin\")}>DRIVER</Text>\r\n                </TouchableOpacity>\r\n                <Text style={styles.orText}>or</Text>\r\n                <TouchableOpacity style={styles.button}>\r\n                    <Text style={styles.buttonText} onPress={() => router.push(\"../login_and_reg/plogin\")}>PASSENGER</Text>\r\n                </TouchableOpacity>\r\n            </View>\r\n        </View>\r\n    );\r\n}\r\n\r\nconst styles = StyleSheet.create({\r\n  container: {\r\n    flex: 1,\r\n    backgroundColor: \"white\",\r\n    justifyContent: \"center\",\r\n    alignItems: \"center\",\r\n  },\r\n  content: {\r\n    width: width * 0.8,\r\n    alignItems: \"center\",\r\n  },\r\n  title: {\r\n    fontSize: 22,\r\n    fontWeight: \"600\",\r\n    color: \"#414141\",\r\n    textAlign: \"center\",\r\n  },\r\n  subtitle: {\r\n    fontSize: 16,\r\n    color: \"#A0A0A0\",\r\n    textAlign: \"center\",\r\n    marginTop: 5,\r\n  },\r\n  question: {\r\n    fontSize: 16,\r\n    color: \"#5089A3\",\r\n    marginTop: 40,\r\n  },\r\n  button: {\r\n    backgroundColor: \"#5089A3\",\r\n    width: \"100%\",\r\n    paddingVertical: 15,\r\n    borderRadius: 5,\r\n    marginTop: 10,\r\n  },\r\n  buttonText: {\r\n    fontSize: 16,\r\n    fontWeight: \"600\",\r\n    color: \"white\",\r\n    textAlign: \"center\",\r\n  },\r\n  orText: {\r\n    fontSize: 16,\r\n    color: \"#A0A0A0\",\r\n    marginVertical: 5,\r\n  },\r\n});\r\n"
+        }
+    ]
+}

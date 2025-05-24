@@ -1,0 +1,166 @@
+{
+    "sourceFile": "app/manual.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 37,
+            "patches": [
+                {
+                    "date": 1742831286581,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1742831362621,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -10,14 +10,10 @@\n         <Text style={styles.title}>Welcome to TODAGo</Text>\r\n         <Text style={styles.subtitle}>Tricycle ride in Lucena made easy</Text>\r\n         <Text style={styles.question}>Are you a</Text>\r\n         <TouchableOpacity style={styles.button}>\r\n-          <Text style={styles.buttonText}>DRIVER</Text>\r\n+          <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n-        <Text style={styles.orText}>or</Text>\r\n-        <TouchableOpacity style={styles.button}>\r\n-          <Text style={styles.buttonText}>PASSENGER</Text>\r\n-        </TouchableOpacity>\r\n       </View>\r\n     </View>\r\n   );\r\n }\r\n"
+                },
+                {
+                    "date": 1742831437921,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -6,11 +6,10 @@\n export default function welcome() {\r\n   return (\r\n     <View style={styles.container}>\r\n       <View style={styles.content}>\r\n-        <Text style={styles.title}>Welcome to TODAGo</Text>\r\n-        <Text style={styles.subtitle}>Tricycle ride in Lucena made easy</Text>\r\n-        <Text style={styles.question}>Are you a</Text>\r\n+        <Text style={styles.title}>Hmmm, we couldn't get your location</Text>\r\n+        <Text style={styles.subtitle}>update your address manually to continue using the app</Text>\r\n         <TouchableOpacity style={styles.button}>\r\n           <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n       </View>\r\n"
+                },
+                {
+                    "date": 1742831602501,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,15 +1,46 @@\n-import React from \"react\";\r\n-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from \"react-native\";\r\n+import React, { useState } from \"react\";\r\n+import {\r\n+  View,\r\n+  Text,\r\n+  TouchableOpacity,\r\n+  TextInput,\r\n+  StyleSheet,\r\n+  Dimensions,\r\n+} from \"react-native\";\r\n+import { MaterialIcons } from \"@expo/vector-icons\"; // Importing icon for edit button\r\n \r\n const { width } = Dimensions.get(\"window\");\r\n \r\n-export default function welcome() {\r\n+export default function WelcomeLocation() {\r\n+  const [address, setAddress] = useState(\"\"); // Store user input\r\n+  const [isEditing, setIsEditing] = useState(false); // Track if editing\r\n+\r\n   return (\r\n     <View style={styles.container}>\r\n       <View style={styles.content}>\r\n         <Text style={styles.title}>Hmmm, we couldn't get your location</Text>\r\n-        <Text style={styles.subtitle}>update your address manually to continue using the app</Text>\r\n+        <Text style={styles.subtitle}>\r\n+          Update your address manually to continue using the app\r\n+        </Text>\r\n+\r\n+        {/* Editable Input Field */}\r\n+        <View style={styles.inputContainer}>\r\n+          <TextInput\r\n+            style={styles.input}\r\n+            placeholder=\"Enter your address\"\r\n+            placeholderTextColor=\"#A0A0A0\"\r\n+            value={address}\r\n+            onChangeText={setAddress}\r\n+            editable={isEditing}\r\n+          />\r\n+          {/* Edit Button */}\r\n+          <TouchableOpacity onPress={() => setIsEditing(true)}>\r\n+            <MaterialIcons name=\"edit\" size={20} color=\"#5089A3\" />\r\n+          </TouchableOpacity>\r\n+        </View>\r\n+\r\n+        {/* Button to Confirm Location */}\r\n         <TouchableOpacity style={styles.button}>\r\n           <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n       </View>\r\n@@ -39,12 +70,23 @@\n     color: \"#A0A0A0\",\r\n     textAlign: \"center\",\r\n     marginTop: 5,\r\n   },\r\n-  question: {\r\n+  inputContainer: {\r\n+    flexDirection: \"row\",\r\n+    alignItems: \"center\",\r\n+    borderWidth: 1,\r\n+    borderColor: \"#D1D1D1\",\r\n+    borderRadius: 8,\r\n+    paddingHorizontal: 10,\r\n+    width: \"100%\",\r\n+    marginTop: 15,\r\n+  },\r\n+  input: {\r\n+    flex: 1,\r\n+    height: 40,\r\n     fontSize: 16,\r\n-    color: \"#5089A3\",\r\n-    marginTop: 40,\r\n+    color: \"#414141\",\r\n   },\r\n   button: {\r\n     backgroundColor: \"#5089A3\",\r\n     width: \"100%\",\r\n@@ -57,10 +99,5 @@\n     fontWeight: \"600\",\r\n     color: \"white\",\r\n     textAlign: \"center\",\r\n   },\r\n-  orText: {\r\n-    fontSize: 16,\r\n-    color: \"#A0A0A0\",\r\n-    marginVertical: 5,\r\n-  },\r\n });\r\n"
+                },
+                {
+                    "date": 1742831686325,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -9,8 +9,9 @@\n } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\"; // Importing icon for edit button\r\n \r\n const { width } = Dimensions.get(\"window\");\r\n+const { height } = Dimensions.get('window');\r\n \r\n export default function WelcomeLocation() {\r\n   const [address, setAddress] = useState(\"\"); // Store user input\r\n   const [isEditing, setIsEditing] = useState(false); // Track if editing\r\n@@ -18,11 +19,9 @@\n   return (\r\n     <View style={styles.container}>\r\n       <View style={styles.content}>\r\n         <Text style={styles.title}>Hmmm, we couldn't get your location</Text>\r\n-        <Text style={styles.subtitle}>\r\n-          Update your address manually to continue using the app\r\n-        </Text>\r\n+        <Text style={styles.subtitle}>Update your address manually to continue using the app</Text>\r\n \r\n         {/* Editable Input Field */}\r\n         <View style={styles.inputContainer}>\r\n           <TextInput\r\n@@ -53,8 +52,9 @@\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n     justifyContent: \"center\",\r\n     alignItems: \"center\",\r\n+    height: height,\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742831719577,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -92,8 +92,9 @@\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n     marginTop: 10,\r\n+    justifyContent: 'flex-end',\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n     fontWeight: \"600\",\r\n"
+                },
+                {
+                    "date": 1742831766080,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -92,9 +92,9 @@\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n     marginTop: 10,\r\n-    justifyContent: 'flex-end',\r\n+    alignSelf: 'flex-end',\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n     fontWeight: \"600\",\r\n"
+                },
+                {
+                    "date": 1742831786955,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -92,9 +92,9 @@\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n     marginTop: 10,\r\n-    alignSelf: 'flex-end',\r\n+    justifyContent: 'space-between',\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n     fontWeight: \"600\",\r\n"
+                },
+                {
+                    "date": 1742831800752,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -92,8 +92,9 @@\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n     marginTop: 10,\r\n+    flexDirection: 'row',\r\n     justifyContent: 'space-between',\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n"
+                },
+                {
+                    "date": 1742831808294,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -92,10 +92,8 @@\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n     marginTop: 10,\r\n-    flexDirection: 'row',\r\n-    justifyContent: 'space-between',\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n     fontWeight: \"600\",\r\n"
+                },
+                {
+                    "date": 1742831820212,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -50,9 +50,9 @@\n const styles = StyleSheet.create({\r\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: \"center\",\r\n+    justifyContent: 'space-between',\r\n     alignItems: \"center\",\r\n     height: height,\r\n   },\r\n   content: {\r\n"
+                },
+                {
+                    "date": 1742831833762,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -50,9 +50,9 @@\n const styles = StyleSheet.create({\r\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: 'space-between',\r\n+    justifyContent: \"center\",\r\n     alignItems: \"center\",\r\n     height: height,\r\n   },\r\n   content: {\r\n"
+                },
+                {
+                    "date": 1742831839779,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -51,9 +51,9 @@\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n     justifyContent: \"center\",\r\n-    alignItems: \"center\",\r\n+    alignItems: 'flex-end',\r\n     height: height,\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n"
+                },
+                {
+                    "date": 1742831863288,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -51,10 +51,11 @@\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n     justifyContent: \"center\",\r\n-    alignItems: 'flex-end',\r\n+    alignItems: \"center\",\r\n     height: height,\r\n+    flexDirection: 'row',\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742831871116,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -53,9 +53,9 @@\n     backgroundColor: \"white\",\r\n     justifyContent: \"center\",\r\n     alignItems: \"center\",\r\n     height: height,\r\n-    flexDirection: 'row',\r\n+    flexDirection: 'column',\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742831888695,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -50,9 +50,9 @@\n const styles = StyleSheet.create({\r\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: \"center\",\r\n+    justifyContent: 'space-between',\r\n     alignItems: \"center\",\r\n     height: height,\r\n     flexDirection: 'column',\r\n   },\r\n"
+                },
+                {
+                    "date": 1742831915292,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -50,9 +50,9 @@\n const styles = StyleSheet.create({\r\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: 'space-between',\r\n+    justifyContent: \"center\",\r\n     alignItems: \"center\",\r\n     height: height,\r\n     flexDirection: 'column',\r\n   },\r\n"
+                },
+                {
+                    "date": 1742831942792,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -48,14 +48,12 @@\n }\r\n \r\n const styles = StyleSheet.create({\r\n   container: {\r\n-    flex: 1,\r\n     backgroundColor: \"white\",\r\n     justifyContent: \"center\",\r\n     alignItems: \"center\",\r\n     height: height,\r\n-    flexDirection: 'column',\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742832032128,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -8,10 +8,9 @@\n   Dimensions,\r\n } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\"; // Importing icon for edit button\r\n \r\n-const { width } = Dimensions.get(\"window\");\r\n-const { height } = Dimensions.get('window');\r\n+const { width, height } = Dimensions.get(\"window\");\r\n \r\n export default function WelcomeLocation() {\r\n   const [address, setAddress] = useState(\"\"); // Store user input\r\n   const [isEditing, setIsEditing] = useState(false); // Track if editing\r\n@@ -19,9 +18,11 @@\n   return (\r\n     <View style={styles.container}>\r\n       <View style={styles.content}>\r\n         <Text style={styles.title}>Hmmm, we couldn't get your location</Text>\r\n-        <Text style={styles.subtitle}>Update your address manually to continue using the app</Text>\r\n+        <Text style={styles.subtitle}>\r\n+          Update your address manually to continue using the app\r\n+        </Text>\r\n \r\n         {/* Editable Input Field */}\r\n         <View style={styles.inputContainer}>\r\n           <TextInput\r\n@@ -36,10 +37,12 @@\n           <TouchableOpacity onPress={() => setIsEditing(true)}>\r\n             <MaterialIcons name=\"edit\" size={20} color=\"#5089A3\" />\r\n           </TouchableOpacity>\r\n         </View>\r\n+      </View>\r\n \r\n-        {/* Button to Confirm Location */}\r\n+      {/* Button at the Bottom */}\r\n+      <View style={styles.buttonContainer}>\r\n         <TouchableOpacity style={styles.button}>\r\n           <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n       </View>\r\n@@ -48,28 +51,30 @@\n }\r\n \r\n const styles = StyleSheet.create({\r\n   container: {\r\n+    flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: \"center\",\r\n+    justifyContent: \"space-between\", // Push content & button apart\r\n     alignItems: \"center\",\r\n-    height: height,\r\n+    paddingVertical: 40, // Ensures spacing\r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n+    marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n     fontSize: 22,\r\n-    fontWeight: \"600\",\r\n+    fontWeight: \"bold\",\r\n     color: \"#414141\",\r\n     textAlign: \"center\",\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#A0A0A0\",\r\n     textAlign: \"center\",\r\n-    marginTop: 5,\r\n+    marginTop: 10,\r\n   },\r\n   inputContainer: {\r\n     flexDirection: \"row\",\r\n     alignItems: \"center\",\r\n@@ -77,26 +82,29 @@\n     borderColor: \"#D1D1D1\",\r\n     borderRadius: 8,\r\n     paddingHorizontal: 10,\r\n     width: \"100%\",\r\n-    marginTop: 15,\r\n+    marginTop: 20,\r\n   },\r\n   input: {\r\n     flex: 1,\r\n     height: 40,\r\n     fontSize: 16,\r\n     color: \"#414141\",\r\n   },\r\n+  buttonContainer: {\r\n+    width: width * 0.8,\r\n+    marginBottom: 40, // Keeps button at bottom\r\n+  },\r\n   button: {\r\n     backgroundColor: \"#5089A3\",\r\n     width: \"100%\",\r\n     paddingVertical: 15,\r\n     borderRadius: 5,\r\n-    marginTop: 10,\r\n   },\r\n   buttonText: {\r\n     fontSize: 16,\r\n-    fontWeight: \"600\",\r\n+    fontWeight: \"bold\",\r\n     color: \"white\",\r\n     textAlign: \"center\",\r\n   },\r\n });\r\n"
+                },
+                {
+                    "date": 1742832059973,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,9 +63,9 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 22,\r\n+    fontSize: 30,\r\n     fontWeight: \"bold\",\r\n     color: \"#414141\",\r\n     textAlign: \"center\",\r\n   },\r\n"
+                },
+                {
+                    "date": 1742832066925,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -66,9 +66,8 @@\n   title: {\r\n     fontSize: 30,\r\n     fontWeight: \"bold\",\r\n     color: \"#414141\",\r\n-    textAlign: \"center\",\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#A0A0A0\",\r\n"
+                },
+                {
+                    "date": 1742832097109,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,9 +63,9 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 30,\r\n+    fontSize: 35,\r\n     fontWeight: \"bold\",\r\n     color: \"#414141\",\r\n   },\r\n   subtitle: {\r\n"
+                },
+                {
+                    "date": 1742832119721,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,11 +63,11 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 35,\r\n+    fontSize: 40,\r\n     fontWeight: \"bold\",\r\n-    color: \"#414141\",\r\n+    color: \"#000000\",\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#A0A0A0\",\r\n"
+                },
+                {
+                    "date": 1742832127988,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -69,9 +69,9 @@\n     color: \"#000000\",\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n-    color: \"#A0A0A0\",\r\n+    color: \"#000000\",\r\n     textAlign: \"center\",\r\n     marginTop: 10,\r\n   },\r\n   inputContainer: {\r\n"
+                },
+                {
+                    "date": 1742832149077,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -66,8 +66,9 @@\n   title: {\r\n     fontSize: 40,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n+    width: width-10,\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n"
+                },
+                {
+                    "date": 1742832158950,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -66,9 +66,9 @@\n   title: {\r\n     fontSize: 40,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n-    width: width-10,\r\n+    width: width-30,\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n"
+                },
+                {
+                    "date": 1742832164715,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -73,8 +73,9 @@\n     fontSize: 16,\r\n     color: \"#000000\",\r\n     textAlign: \"center\",\r\n     marginTop: 10,\r\n+    width: width-30,\r\n   },\r\n   inputContainer: {\r\n     flexDirection: \"row\",\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742832173567,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -71,9 +71,8 @@\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n-    textAlign: \"center\",\r\n     marginTop: 10,\r\n     width: width-30,\r\n   },\r\n   inputContainer: {\r\n"
+                },
+                {
+                    "date": 1742832182642,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,9 +63,9 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 40,\r\n+    fontSize: 50,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n     width: width-30,\r\n   },\r\n"
+                },
+                {
+                    "date": 1742832188296,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -69,9 +69,9 @@\n     color: \"#000000\",\r\n     width: width-30,\r\n   },\r\n   subtitle: {\r\n-    fontSize: 16,\r\n+    fontSize: 14,\r\n     color: \"#000000\",\r\n     marginTop: 10,\r\n     width: width-30,\r\n   },\r\n"
+                },
+                {
+                    "date": 1742832193667,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -69,9 +69,9 @@\n     color: \"#000000\",\r\n     width: width-30,\r\n   },\r\n   subtitle: {\r\n-    fontSize: 14,\r\n+    fontSize: 16,\r\n     color: \"#000000\",\r\n     marginTop: 10,\r\n     width: width-30,\r\n   },\r\n"
+                },
+                {
+                    "date": 1742832203335,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,9 +63,9 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 50,\r\n+    fontSize: 55,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n     width: width-30,\r\n   },\r\n"
+                },
+                {
+                    "date": 1742832208613,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -66,9 +66,9 @@\n   title: {\r\n     fontSize: 55,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n-    width: width-30,\r\n+    width: width-40,\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n"
+                },
+                {
+                    "date": 1742832217893,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -63,18 +63,18 @@\n     alignItems: \"center\",\r\n     marginTop: 40, // Prevents overlapping with status bar\r\n   },\r\n   title: {\r\n-    fontSize: 55,\r\n+    fontSize: 50,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n     width: width-40,\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n     marginTop: 10,\r\n-    width: width-30,\r\n+    width: width-40,\r\n   },\r\n   inputContainer: {\r\n     flexDirection: \"row\",\r\n     alignItems: \"center\",\r\n"
+                },
+                {
+                    "date": 1742832238397,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -67,8 +67,9 @@\n     fontSize: 50,\r\n     fontWeight: \"bold\",\r\n     color: \"#000000\",\r\n     width: width-40,\r\n+    marginBottom: 10,\r\n   },\r\n   subtitle: {\r\n     fontSize: 16,\r\n     color: \"#000000\",\r\n"
+                },
+                {
+                    "date": 1742832374795,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,20 +1,15 @@\n import React, { useState } from \"react\";\r\n-import {\r\n-  View,\r\n-  Text,\r\n-  TouchableOpacity,\r\n-  TextInput,\r\n-  StyleSheet,\r\n-  Dimensions,\r\n-} from \"react-native\";\r\n+import { View, Text, TouchableOpacity, TextInput, StyleSheet, Dimensions, } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\"; // Importing icon for edit button\r\n+import { useRouter } from \"expo-router\";\r\n \r\n const { width, height } = Dimensions.get(\"window\");\r\n \r\n export default function WelcomeLocation() {\r\n   const [address, setAddress] = useState(\"\"); // Store user input\r\n   const [isEditing, setIsEditing] = useState(false); // Track if editing\r\n+  const router = useRouter();\r\n \r\n   return (\r\n     <View style={styles.container}>\r\n       <View style={styles.content}>\r\n@@ -41,9 +36,9 @@\n       </View>\r\n \r\n       {/* Button at the Bottom */}\r\n       <View style={styles.buttonContainer}>\r\n-        <TouchableOpacity style={styles.button}>\r\n+        <TouchableOpacity style={styles.button} onPress={() => router.push(\"/manual\")}>\r\n           <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n       </View>\r\n     </View>\r\n"
+                },
+                {
+                    "date": 1742832381462,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -36,9 +36,9 @@\n       </View>\r\n \r\n       {/* Button at the Bottom */}\r\n       <View style={styles.buttonContainer}>\r\n-        <TouchableOpacity style={styles.button} onPress={() => router.push(\"/manual\")}>\r\n+        <TouchableOpacity style={styles.button} onPress={() => router.push(\"/welcome\")}>\r\n           <Text style={styles.buttonText}>Use This Location</Text>\r\n         </TouchableOpacity>\r\n       </View>\r\n     </View>\r\n"
+                },
+                {
+                    "date": 1742832443424,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -48,16 +48,16 @@\n const styles = StyleSheet.create({\r\n   container: {\r\n     flex: 1,\r\n     backgroundColor: \"white\",\r\n-    justifyContent: \"space-between\", // Push content & button apart\r\n+    justifyContent: \"space-between\", \r\n     alignItems: \"center\",\r\n-    paddingVertical: 40, // Ensures spacing\r\n+    paddingVertical: 40, \r\n   },\r\n   content: {\r\n     width: width * 0.8,\r\n     alignItems: \"center\",\r\n-    marginTop: 40, // Prevents overlapping with status bar\r\n+    marginTop: 40,\r\n   },\r\n   title: {\r\n     fontSize: 50,\r\n     fontWeight: \"bold\",\r\n@@ -88,9 +88,9 @@\n     color: \"#414141\",\r\n   },\r\n   buttonContainer: {\r\n     width: width * 0.8,\r\n-    marginBottom: 40, // Keeps button at bottom\r\n+    marginBottom: 40, \r\n   },\r\n   button: {\r\n     backgroundColor: \"#5089A3\",\r\n     width: \"100%\",\r\n"
+                }
+            ],
+            "date": 1742831286581,
+            "name": "Commit-0",
+            "content": "import React from \"react\";\r\nimport { View, Text, TouchableOpacity, StyleSheet, Dimensions } from \"react-native\";\r\n\r\nconst { width } = Dimensions.get(\"window\");\r\n\r\nexport default function welcome() {\r\n  return (\r\n    <View style={styles.container}>\r\n      <View style={styles.content}>\r\n        <Text style={styles.title}>Welcome to TODAGo</Text>\r\n        <Text style={styles.subtitle}>Tricycle ride in Lucena made easy</Text>\r\n        <Text style={styles.question}>Are you a</Text>\r\n        <TouchableOpacity style={styles.button}>\r\n          <Text style={styles.buttonText}>DRIVER</Text>\r\n        </TouchableOpacity>\r\n        <Text style={styles.orText}>or</Text>\r\n        <TouchableOpacity style={styles.button}>\r\n          <Text style={styles.buttonText}>PASSENGER</Text>\r\n        </TouchableOpacity>\r\n      </View>\r\n    </View>\r\n  );\r\n}\r\n\r\nconst styles = StyleSheet.create({\r\n  container: {\r\n    flex: 1,\r\n    backgroundColor: \"white\",\r\n    justifyContent: \"center\",\r\n    alignItems: \"center\",\r\n  },\r\n  content: {\r\n    width: width * 0.8,\r\n    alignItems: \"center\",\r\n  },\r\n  title: {\r\n    fontSize: 22,\r\n    fontWeight: \"600\",\r\n    color: \"#414141\",\r\n    textAlign: \"center\",\r\n  },\r\n  subtitle: {\r\n    fontSize: 16,\r\n    color: \"#A0A0A0\",\r\n    textAlign: \"center\",\r\n    marginTop: 5,\r\n  },\r\n  question: {\r\n    fontSize: 16,\r\n    color: \"#5089A3\",\r\n    marginTop: 40,\r\n  },\r\n  button: {\r\n    backgroundColor: \"#5089A3\",\r\n    width: \"100%\",\r\n    paddingVertical: 15,\r\n    borderRadius: 5,\r\n    marginTop: 10,\r\n  },\r\n  buttonText: {\r\n    fontSize: 16,\r\n    fontWeight: \"600\",\r\n    color: \"white\",\r\n    textAlign: \"center\",\r\n  },\r\n  orText: {\r\n    fontSize: 16,\r\n    color: \"#A0A0A0\",\r\n    marginVertical: 5,\r\n  },\r\n});\r\n"
+        }
+    ]
+}

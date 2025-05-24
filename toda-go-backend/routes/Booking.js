@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const DriverStatus = require("../models/DriverStatus");
+const Passenger = require("../models/Passenger");
 
 let bookings = [];
 
@@ -14,17 +15,15 @@ router.post('/book', async (req, res) => {
       fare,
       paymentMethod,
       notes,
-      passengerName,
+      passengerId,
     } = req.body;
 
-    // STEP 1: Get all online drivers
     const onlineDrivers = await DriverStatus.find({ isOnline: true });
 
     if (onlineDrivers.length === 0) {
       return res.status(404).json({ message: "No available drivers right now." });
     }
 
-    // STEP 2: Find the nearest one using haversine formula
     const getDistance = (lat1, lon1, lat2, lon2) => {
       const toRad = (v) => (v * Math.PI) / 180;
       const R = 6371;
@@ -57,7 +56,17 @@ router.post('/book', async (req, res) => {
       return res.status(404).json({ message: "No nearby driver found." });
     }
 
-    // STEP 3: Save booking and assign driver
+    let passengerName = "Anonymous";
+    try {
+      const passenger = await Passenger.findById(passengerId).select("firstName middleName lastName");
+      if (passenger) {
+        passengerName = `${passenger.firstName} ${passenger.middleName} ${passenger.lastName}`;
+      }
+    } catch (err) {
+      console.warn("⚠️ Could not fetch passenger name, defaulting to Anonymous.");
+    }
+
+
     const bookingData = {
       id: bookings.length + 1,
       pickupLat,
@@ -69,34 +78,27 @@ router.post('/book', async (req, res) => {
       notes,
       passengerName: passengerName || "Anonymous",
       driverId: nearestDriver.driverId,
-      driverName: nearestDriver.driverName,
       status: "pending",
       createdAt: new Date(),
+      passengerId,
     };
 
     bookings.push(bookingData);
-
-    console.log("📥 Booking stored with driver match:", bookingData);
-
     return res.status(200).json({
         message: "Booking matched with driver!",
         booking: {
             ...bookingData,
-            driverId: nearestDriver.driverId, // ensure it's inside the booking object
-            driverName: nearestDriver.driverName,
+            driverId: nearestDriver.driverId,
         },
         distance: shortestDistance.toFixed(2),
     });
-
-
-
   } catch (error) {
     console.error("❌ Error during booking:", error);
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-// Debug route: view all bookings
+
 router.get('/bookings', (req, res) => {
   return res.status(200).json(bookings);
 });
@@ -105,11 +107,12 @@ router.get('/driver-requests/:driverId', (req, res) => {
   const { driverId } = req.params;
 
   const driverBookings = bookings.filter(
-    (b) => b.driverId === driverId && b.status === "pending"
+    (b) => String(b.driverId) === driverId && b.status === "pending"
   );
 
   res.status(200).json(driverBookings);
 });
+
 
 router.post('/accept-booking', (req, res) => {
   const { bookingId } = req.body;
@@ -120,8 +123,6 @@ router.post('/accept-booking', (req, res) => {
   }
 
   booking.status = "accepted";
-
-  console.log("✅ Booking accepted:", booking);
 
   return res.status(200).json({ message: "Booking accepted", booking });
 });
@@ -134,6 +135,20 @@ router.post('/confirm-driver', (req, res) => {
   booking.passengerConfirmed = true;
 
   return res.status(200).json({ message: "Passenger confirmed driver", booking });
+});
+
+
+router.post('/cancel-booking', (req, res) => {
+  const { bookingId } = req.body;
+
+  const booking = bookings.find(b => b.id === bookingId);
+  if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+  booking.status = "cancelled";
+  booking.cancelledBy = "passenger";
+  console.log("❌ Booking cancelled by passenger:", bookingId);
+
+  res.status(200).json({ message: "Booking cancelled" });
 });
 
 

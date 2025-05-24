@@ -1,0 +1,26 @@
+{
+    "sourceFile": "app/database/firebase-config.js",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1743952638986,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1743953173882,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -4,15 +4,17 @@\n import { getFirestore } from \"firebase/firestore\";\r\n \r\n // 🚨 Replace this with your actual Firebase project config!\r\n const firebaseConfig = {\r\n-  apiKey: \"YOUR_API_KEY\",\r\n-  authDomain: \"your-project.firebaseapp.com\",\r\n-  projectId: \"your-project-id\",\r\n-  storageBucket: \"your-project.appspot.com\",\r\n-  messagingSenderId: \"your-messaging-id\",\r\n-  appId: \"your-app-id\"\r\n-};\r\n+    apiKey: \"AIzaSyBmM6734oZJkcxWZ3g8gijjsbBWTuZ_L8A\",\r\n+    authDomain: \"toda-go-dd81a.firebaseapp.com\",\r\n+    databaseURL: \"https://toda-go-dd81a-default-rtdb.firebaseio.com\",\r\n+    projectId: \"toda-go-dd81a\",\r\n+    storageBucket: \"toda-go-dd81a.firebasestorage.app\",\r\n+    messagingSenderId: \"702097062002\",\r\n+    appId: \"1:702097062002:web:a656198eaf56b68351eaeb\",\r\n+    measurementId: \"G-L1N01B6DTX\"\r\n+  };\r\n \r\n // Initialize Firebase\r\n const app = initializeApp(firebaseConfig);\r\n \r\n"
+                },
+                {
+                    "date": 1743953747962,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -2,9 +2,8 @@\n import { initializeApp } from \"firebase/app\";\r\n import { getAuth } from \"firebase/auth\";\r\n import { getFirestore } from \"firebase/firestore\";\r\n \r\n-// 🚨 Replace this with your actual Firebase project config!\r\n const firebaseConfig = {\r\n     apiKey: \"AIzaSyBmM6734oZJkcxWZ3g8gijjsbBWTuZ_L8A\",\r\n     authDomain: \"toda-go-dd81a.firebaseapp.com\",\r\n     databaseURL: \"https://toda-go-dd81a-default-rtdb.firebaseio.com\",\r\n"
+                }
+            ],
+            "date": 1743952638986,
+            "name": "Commit-0",
+            "content": "// app/firebase-config.js\r\nimport { initializeApp } from \"firebase/app\";\r\nimport { getAuth } from \"firebase/auth\";\r\nimport { getFirestore } from \"firebase/firestore\";\r\n\r\n// 🚨 Replace this with your actual Firebase project config!\r\nconst firebaseConfig = {\r\n  apiKey: \"YOUR_API_KEY\",\r\n  authDomain: \"your-project.firebaseapp.com\",\r\n  projectId: \"your-project-id\",\r\n  storageBucket: \"your-project.appspot.com\",\r\n  messagingSenderId: \"your-messaging-id\",\r\n  appId: \"your-app-id\"\r\n};\r\n\r\n// Initialize Firebase\r\nconst app = initializeApp(firebaseConfig);\r\n\r\n// Export services\r\nexport const auth = getAuth(app);\r\nexport const db = getFirestore(app);\r\n"
+        }
+    ]
+}

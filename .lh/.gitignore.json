@@ -1,0 +1,18 @@
+{
+    "sourceFile": ".gitignore",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1748053788142,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1748053788142,
+            "name": "Commit-0",
+            "content": "# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files\n\n# dependencies\nnode_modules/\n\n# Expo\n.expo/\ndist/\nweb-build/\nexpo-env.d.ts\n\n# Native\n*.orig.*\n*.jks\n*.p8\n*.p12\n*.key\n*.mobileprovision\n\n# Metro\n.metro-health-check*\n\n# debug\nnpm-debug.*\nyarn-debug.*\nyarn-error.*\n\n# macOS\n.DS_Store\n*.pem\n\n# local env files\n.env*.local\n\n# typescript\n*.tsbuildinfo\n\ntoda-go-backend/\n\n\napp-example\n"
+        }
+    ]
+}
