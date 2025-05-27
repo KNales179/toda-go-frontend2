@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 11,
+            "activePatchIndex": 12,
             "patches": [
                 {
                     "date": 1743946962801,
@@ -52,6 +52,10 @@
                 {
                     "date": 1747410449673,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -41,9 +41,8 @@\n       }\r\n \r\n       if (response.ok && data.driver && data.driver._id) {\r\n         await AsyncStorage.setItem(\"driverId\", data.driver._id);\r\n-        await AsyncStorage.setItem(\"driverName\", data.driver.driverName);\r\n         Alert.alert(\"Login Successful\", \"Welcome!\");\r\n         router.push(\"../homedriver/dhome\");\r\n       } else {\r\n         Alert.alert(\"Login Failed\", data.error || \"Invalid credentials\");\r\n"
+                },
+                {
+                    "date": 1748322037065,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -7,8 +7,9 @@\n   Dimensions,\r\n   TextInput,\r\n   StatusBar,\r\n   Alert,\r\n+  Keyboard \r\n } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\";\r\n import { useRouter } from \"expo-router\";\r\n import { API_BASE_URL } from \"../../config\";\r\n@@ -22,8 +23,9 @@\n   const [isPasswordVisible, setIsPasswordVisible] = useState(false);\r\n   const router = useRouter();\r\n \r\n   const loginDriver = async () => {\r\n+    Keyboard.dismiss();\r\n     try {\r\n       console.log(\"API_BASE_URL is\", API_BASE_URL);\r\n       const response = await fetch(`${API_BASE_URL}/api/login/driver/login`, {\r\n         method: \"POST\",\r\n"
                 }
             ],
             "date": 1743946962801,

@@ -3,11 +3,15 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 0,
+            "activePatchIndex": 1,
             "patches": [
                 {
                     "date": 1748053788142,
                     "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1748054411623,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,41 +1,42 @@\n-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files\r\n-\r\n-# dependencies\r\n-node_modules/\r\n-\r\n-# Expo\r\n-.expo/\r\n-dist/\r\n-web-build/\r\n-expo-env.d.ts\r\n-\r\n-# Native\r\n-*.orig.*\r\n-*.jks\r\n-*.p8\r\n-*.p12\r\n-*.key\r\n-*.mobileprovision\r\n-\r\n-# Metro\r\n-.metro-health-check*\r\n-\r\n-# debug\r\n-npm-debug.*\r\n-yarn-debug.*\r\n-yarn-error.*\r\n-\r\n-# macOS\r\n-.DS_Store\r\n-*.pem\r\n-\r\n-# local env files\r\n-.env*.local\r\n-\r\n-# typescript\r\n-*.tsbuildinfo\r\n-\r\n-toda-go-backend/\r\n-\r\n-\r\n-app-example\r\n+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files\n+\n+# dependencies\n+node_modules/\n+\n+# Expo\n+.expo/\n+dist/\n+web-build/\n+expo-env.d.ts\n+\n+# Native\n+*.orig.*\n+*.jks\n+*.p8\n+*.p12\n+*.key\n+*.mobileprovision\n+\n+# Metro\n+.metro-health-check*\n+\n+# debug\n+npm-debug.*\n+yarn-debug.*\n+yarn-error.*\n+\n+# macOS\n+.DS_Store\n+*.pem\n+\n+# local env files\n+.env*.local\n+\n+# typescript\n+*.tsbuildinfo\n+\n+toda-go-backend/\n+.history/\n+\n+\n+app-example\n"
                 }
             ],
             "date": 1748053788142,

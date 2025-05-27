@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 14,
+            "activePatchIndex": 16,
             "patches": [
                 {
                     "date": 1743947071878,
@@ -64,6 +64,14 @@
                 {
                     "date": 1747658881827,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -41,17 +41,8 @@\n       } catch (jsonError) {\r\n         console.error(\"Server did not return JSON:\", text);\r\n         throw new Error(\"Invalid server response: not JSON\");\r\n       }\r\n-\r\n-      if (response.ok && data.userId) {\r\n-        \r\n-        Alert.alert(\"Login Successful\", \"Welcome!\");\r\n-        router.push(\"../homepassenger/phome\");\r\n-      } else {\r\n-        Alert.alert(\"Login Failed\", data.error || \"Invalid credentials\");\r\n-      }\r\n-\r\n   \r\n       if (response.ok) {\r\n         await AsyncStorage.setItem(\"passengerId\", data.userId);\r\n         Alert.alert(\"Login Successful\", \"Welcome!\");\r\n"
+                },
+                {
+                    "date": 1748322049915,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -7,8 +7,9 @@\n   Dimensions,\r\n   TextInput,\r\n   StatusBar,\r\n   Alert,\r\n+  Keyboard\r\n } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\";\r\n import { useRouter } from \"expo-router\";\r\n import {API_BASE_URL} from \"../../config\";\r\n"
+                },
+                {
+                    "date": 1748322066185,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -23,8 +23,9 @@\n   const [isPasswordVisible, setIsPasswordVisible] = useState(false);\r\n   const router = useRouter();\r\n \r\n   const loginUser = async () => {\r\n+    Keyboard.dismiss();\r\n     try {\r\n       console.log(\"API_BASE_URL is\", API_BASE_URL);\r\n       const response = await fetch(`${API_BASE_URL}/api/login/passenger/login`, {\r\n         method: \"POST\",\r\n"
                 }
             ],
             "date": 1743947071878,
