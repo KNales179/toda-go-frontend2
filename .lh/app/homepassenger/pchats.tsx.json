@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 4,
+            "activePatchIndex": 5,
             "patches": [
                 {
                     "date": 1748350364815,
@@ -24,6 +24,10 @@
                 {
                     "date": 1748351176561,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -8,9 +8,9 @@\n export default function PChats() {\r\n   return (\r\n     <View style={styles.container}>\r\n       <Text style={styles.heading}>MESSAGES</Text>\r\n-      <Image source={require('../../assets/chat.png')} style={styles.chatImage} />\r\n+      <Image source={require('../../assets/images/chat.png')} style={styles.chatImage} />\r\n       <Text style={styles.message}>Ang message dito ay lalabas kapag naka pag book ka na ng ride sa iyong driver.</Text>\r\n \r\n       <View style={styles.bottomNav}>\r\n         <TouchableOpacity onPress={() => router.push(\"/homepassenger/phome\")}>\r\n"
+                },
+                {
+                    "date": 1748422907984,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -7,12 +7,20 @@\n \r\n export default function PChats() {\r\n   return (\r\n     <View style={styles.container}>\r\n-      <Text style={styles.heading}>MESSAGES</Text>\r\n-      <Image source={require('../../assets/images/chat.png')} style={styles.chatImage} />\r\n-      <Text style={styles.message}>Ang message dito ay lalabas kapag naka pag book ka na ng ride sa iyong driver.</Text>\r\n+      {/* Top bar with Messages text */}\r\n+      <View style={styles.topBar}>\r\n+        <Text style={styles.heading}>MESSAGES</Text>\r\n+      </View>\r\n \r\n+      <View style={styles.contentContainer}>\r\n+        <Image source={require('../../assets/images/chat.png')} style={styles.chatImage} />\r\n+        <Text style={styles.message}>\r\n+          Ang message dito ay lalabas kapag naka pag book ka na ng ride sa iyong driver.\r\n+        </Text>\r\n+      </View>\r\n+\r\n       <View style={styles.bottomNav}>\r\n         <TouchableOpacity onPress={() => router.push(\"/homepassenger/phome\")}>\r\n           <Ionicons name=\"home-outline\" size={30} color=\"black\" />\r\n           <Text>Home</Text>\r\n@@ -34,10 +42,25 @@\n   );\r\n }\r\n \r\n const styles = StyleSheet.create({\r\n-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },\r\n-  heading: { fontWeight: 'bold', fontSize: 18, marginBottom: 20 },\r\n+  container: { flex: 1, backgroundColor: \"#fff\" },\r\n+  topBar: { marginTop: 40, marginLeft: 20, marginBottom: 20 },\r\n+  heading: { fontWeight: 'bold', fontSize: 22 },\r\n+  contentContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },\r\n   chatImage: { width: 150, height: 150, marginBottom: 20, resizeMode: 'contain' },\r\n   message: { textAlign: 'center', fontSize: 14, color: '#333' },\r\n-  bottomNav: { position: \"absolute\", bottom: 0, flexDirection: \"row\", justifyContent: \"space-around\", width: width, height: 70, backgroundColor: \"white\", borderTopLeftRadius: 30, borderTopRightRadius: 30, alignItems: \"center\", borderWidth: 1, borderColor: \"black\" },\r\n+  bottomNav: {\r\n+    position: \"absolute\",\r\n+    bottom: 0,\r\n+    flexDirection: \"row\",\r\n+    justifyContent: \"space-around\",\r\n+    width: width,\r\n+    height: 70,\r\n+    backgroundColor: \"white\",\r\n+    borderTopLeftRadius: 30,\r\n+    borderTopRightRadius: 30,\r\n+    alignItems: \"center\",\r\n+    borderWidth: 1,\r\n+    borderColor: \"black\"\r\n+  },\r\n });\r\n"
                 }
             ],
             "date": 1748350364815,
