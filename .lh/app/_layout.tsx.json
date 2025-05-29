@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 5,
+            "activePatchIndex": 10,
             "patches": [
                 {
                     "date": 1742703388027,
@@ -28,6 +28,26 @@
                 {
                     "date": 1745807727014,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,6 +1,6 @@\n import { Stack } from \"expo-router\";\r\n-import { LocationProvider } from \"../location/GlobalLocation\"; \r\n+import { LocationProvider } from \"./location/GlobalLocation\"; \r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n"
+                },
+                {
+                    "date": 1748463091091,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,11 +1,15 @@\n import { Stack } from \"expo-router\";\r\n import { LocationProvider } from \"./location/GlobalLocation\"; \r\n+import View \r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n     <LocationProvider>\r\n+      <View style={{ paddingTop: 30 }}>\r\n+        <StatusBar barStyle=\"light-content\" translucent={true} backgroundColor=\"black\" />\r\n+      </View>\r\n       <Stack screenOptions={{ headerShown: false }}>\r\n       </Stack>\r\n     </LocationProvider>\r\n   );\r\n"
+                },
+                {
+                    "date": 1748463102234,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,7 +1,7 @@\n import { Stack } from \"expo-router\";\r\n import { LocationProvider } from \"./location/GlobalLocation\"; \r\n-import View \r\n+import {View} from \"react-native\";\r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n"
+                },
+                {
+                    "date": 1748463124050,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,7 +1,7 @@\n import { Stack } from \"expo-router\";\r\n import { LocationProvider } from \"./location/GlobalLocation\"; \r\n-import {View} from \"react-native\";\r\n+import { View, StatusBar } from \"react-native\";\r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n"
+                },
+                {
+                    "date": 1748463175396,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -5,12 +5,12 @@\n export default function RootLayout() {\r\n \r\n return ( \r\n     <LocationProvider>\r\n-      <View style={{ paddingTop: 30 }}>\r\n-        <StatusBar barStyle=\"light-content\" translucent={true} backgroundColor=\"black\" />\r\n-      </View>\r\n       <Stack screenOptions={{ headerShown: false }}>\r\n+        <View style={{ paddingTop: 30 }}>\r\n+          <StatusBar barStyle=\"light-content\" translucent={true} backgroundColor=\"black\" />\r\n+        </View>\r\n       </Stack>\r\n     </LocationProvider>\r\n   );\r\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1748463421663,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,16 +1,12 @@\n import { Stack } from \"expo-router\";\r\n import { LocationProvider } from \"./location/GlobalLocation\"; \r\n-import { View, StatusBar } from \"react-native\";\r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n     <LocationProvider>\r\n       <Stack screenOptions={{ headerShown: false }}>\r\n-        <View style={{ paddingTop: 30 }}>\r\n-          <StatusBar barStyle=\"light-content\" translucent={true} backgroundColor=\"black\" />\r\n-        </View>\r\n       </Stack>\r\n     </LocationProvider>\r\n   );\r\n }\n\\ No newline at end of file\n"
                 }
             ],
             "date": 1742703388027,

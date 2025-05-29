@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 12,
+            "activePatchIndex": 13,
             "patches": [
                 {
                     "date": 1743946962801,
@@ -56,6 +56,10 @@
                 {
                     "date": 1748322037065,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -7,8 +7,9 @@\n   Dimensions,\r\n   TextInput,\r\n   StatusBar,\r\n   Alert,\r\n+  Keyboard \r\n } from \"react-native\";\r\n import { MaterialIcons } from \"@expo/vector-icons\";\r\n import { useRouter } from \"expo-router\";\r\n import { API_BASE_URL } from \"../../config\";\r\n@@ -22,8 +23,9 @@\n   const [isPasswordVisible, setIsPasswordVisible] = useState(false);\r\n   const router = useRouter();\r\n \r\n   const loginDriver = async () => {\r\n+    Keyboard.dismiss();\r\n     try {\r\n       console.log(\"API_BASE_URL is\", API_BASE_URL);\r\n       const response = await fetch(`${API_BASE_URL}/api/login/driver/login`, {\r\n         method: \"POST\",\r\n"
+                },
+                {
+                    "date": 1748456694964,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -59,9 +59,9 @@\n   return (\r\n     <View style={styles.container}>\r\n       <StatusBar barStyle=\"dark-content\" translucent backgroundColor=\"transparent\" />\r\n       <View style={styles.inner}>\r\n-        <TouchableOpacity onPress={() => router.back()}>\r\n+        <TouchableOpacity onPress={() => router.push(\"../location/welcome\")}>\r\n           <Text style={styles.back}>Back</Text>\r\n         </TouchableOpacity>\r\n \r\n         <Text style={styles.title}>Sign in with your Driver or Operator account</Text>\r\n"
                 }
             ],
             "date": 1743946962801,
