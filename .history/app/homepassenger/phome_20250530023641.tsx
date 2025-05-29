@@ -45,8 +45,6 @@ export default function PHome() {
   const [otherReport, setOtherReport] = useState("");
   const [pickupName, setPickupName] = useState("");
   const [dropoffName, setDropoffName] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-
 
   // Reverse geocode for pick-up location
   useEffect(() => {
@@ -339,15 +337,12 @@ export default function PHome() {
   useEffect(() => {
     const saveDriverId = async () => {
       if (matchedDriver && bookingId) {
-        console.log("driver match");
         await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
-        await AsyncStorage.setItem("bookingIdToRate", String(bookingId)); // 👈 Fix here
-        console.log(matchedDriver.driverId, bookingId);
+        await AsyncStorage.setItem("bookingIdToRate", bookingId);
       }
     };
     saveDriverId();
   }, [matchedDriver, bookingId]);
-
 
 
 
@@ -594,7 +589,6 @@ export default function PHome() {
                   mapRef.current = ref;
                 }
               }}
-              pointerEvents={showReportModal ? "none" : "auto"}
               originWhitelist={["*"]}
               source={{ html: mapHtml }}
               javaScriptEnabled
@@ -679,7 +673,7 @@ export default function PHome() {
 
                         <TouchableOpacity
                           onPress={() => setShowReportModal(true)}
-                          style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5 }}
+                          style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5, marginTop: 10 }}
                         >
                           <Text style={{ color: "white" }}>Report Driver</Text>
                         </TouchableOpacity>
@@ -840,35 +834,18 @@ export default function PHome() {
                   <Text style={styles.modalTitle}>Report Driver</Text>
 
                   <Text style={styles.modalLabel}>Select Report Type:</Text>
-                  <View style={styles.dropdownContainer}>
-                    <TouchableOpacity
-                      style={styles.dropdownButton}
-                      onPress={() => setShowDropdown(!showDropdown)}
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={reportType}
+                      onValueChange={(itemValue) => setReportType(itemValue)}
+                      style={styles.picker}
                     >
-                      <Text style={{ color: reportType ? "#000" : "#999" }}>
-                        {reportType || "Select a violation"}
-                      </Text>
-                      <Ionicons name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#999" />
-                    </TouchableOpacity>
-
-                    {showDropdown && (
-                      <View style={styles.dropdownMenu}>
-                        {reportOptions.map((option) => (
-                          <TouchableOpacity
-                            key={option}
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setReportType(option);
-                              setShowDropdown(false);
-                            }}
-                          >
-                            <Text style={{ color: "#000" }}>{option}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
+                      <Picker.Item label="Select a violation" value="" />
+                      {reportOptions.map((option) => (
+                        <Picker.Item label={option} value={option} key={option} />
+                      ))}
+                    </Picker>
                   </View>
-
 
                   {reportType === "Other" && (
                     <TextInput
@@ -992,34 +969,13 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
     borderRadius: 8,
     marginBottom: 10,
+    padding: 0,
     overflow: "hidden",
   },
   picker: {
-    height: 50,
-    padding: 0,
+    height: 45,
     width: "100%",
   },
-
-  dropdownContainer: { width: "100%", marginVertical: 5 },
-  dropdownButton: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 10,
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-  },
-  dropdownMenu: {
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    marginTop: 2,
-  },
-  dropdownItem: { padding: 10 },
-
 
 
   totalFare: { fontWeight: 'bold' },

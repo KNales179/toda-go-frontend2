@@ -338,16 +338,31 @@ export default function PHome() {
 
   useEffect(() => {
     const saveDriverId = async () => {
-      if (matchedDriver && bookingId) {
-        console.log("driver match");
-        await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
-        await AsyncStorage.setItem("bookingIdToRate", String(bookingId)); // 👈 Fix here
-        console.log(matchedDriver.driverId, bookingId);
+      if (matchedDriver) {
+        console.log('driver match')
+        if (matchedDriver && bookingId) {
+          await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
+          await AsyncStorage.setItem("bookingIdToRate", String(bookingId));
+          console.log(matchedDriver.driverId, bookingId )
+        }
       }
+
+      
     };
     saveDriverId();
   }, [matchedDriver, bookingId]);
 
+  useEffect(() => {
+    const saveDriverId = async () => {
+      if (matchedDriver) {
+        console.log('driver match 2')
+        if (matchedDriver?.driverId) {
+          await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
+        }
+      }
+    };
+    saveDriverId();
+  }, [matchedDriver]);
 
 
 

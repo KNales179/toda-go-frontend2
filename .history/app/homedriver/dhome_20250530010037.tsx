@@ -198,6 +198,7 @@ export default function DHome() {
       console.log("🧾 Booking status after accepting:", result.booking.status);
       const passengerId = result.booking.passengerId;
       if (passengerId) {
+        console.log(passengerId)
         const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`);
         const infoData = await infoRes.json();
         if (infoData.passenger) {

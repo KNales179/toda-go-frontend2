@@ -147,7 +147,6 @@ export default function DHome() {
   useEffect(() => {
     let interval: any;
     if (incomingBooking && incomingBooking.status === "accepted") {
-      console.log("🧠 Booking state changed:", incomingBooking);
       setConfirmed(true);
     }
     return () => clearInterval(interval);

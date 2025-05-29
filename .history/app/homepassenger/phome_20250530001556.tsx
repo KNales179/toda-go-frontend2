@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard, Image, BackHandler, ScrollView } from "react-native";
-import { Picker } from "@react-native-picker/picker";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  TouchableOpacity,
+  StatusBar,
+  TextInput,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Image,
+  BackHandler,
+  ScrollView
+} from "react-native";
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
@@ -40,13 +55,11 @@ export default function PHome() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [selectedRating, setSelectedRating] = useState(0);
   const [tripCompleted, setTripCompleted] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportType, setReportType] = useState("");
-  const [otherReport, setOtherReport] = useState("");
+
+
+  // NEW: For address names
   const [pickupName, setPickupName] = useState("");
   const [dropoffName, setDropoffName] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-
 
   // Reverse geocode for pick-up location
   useEffect(() => {
@@ -249,18 +262,13 @@ export default function PHome() {
     }
   }, [destination, matchedDriver, bookingConfirmed]);
 
-  
-
-
-
-
+  // BOOK NOW logic unchanged
   const handleBookNow = async () => {
     if (!location || !destination) {
       Alert.alert("Missing location info");
       return;
     }
     setAlertedBookingComplete(false);
-    setTripCompleted(false);
     const passengerId = await AsyncStorage.getItem("passengerId");
     const bookingData = {
       pickupLat: location.latitude,
@@ -302,7 +310,7 @@ export default function PHome() {
               experienceYears: driverData.driver.experienceYears || "N/A",
               selfieImage: driverData.driver.selfieImage || "N/A",
               location: statusData.location || null, // Live GPS
-            }); 
+            });
             setSearching(false);
             return;
           }
@@ -322,11 +330,6 @@ export default function PHome() {
     }
   };
 
-
-
-
-
-
   useEffect(() => {
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOffset(-35));
     const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOffset(0));
@@ -335,21 +338,6 @@ export default function PHome() {
       hideSub.remove();
     };
   }, []);
-
-  useEffect(() => {
-    const saveDriverId = async () => {
-      if (matchedDriver && bookingId) {
-        console.log("driver match");
-        await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
-        await AsyncStorage.setItem("bookingIdToRate", String(bookingId)); // 👈 Fix here
-        console.log(matchedDriver.driverId, bookingId);
-      }
-    };
-    saveDriverId();
-  }, [matchedDriver, bookingId]);
-
-
-
 
   useEffect(() => {
     let interval;
@@ -380,9 +368,10 @@ export default function PHome() {
         const allBookings = await res.json();
         const myBooking = allBookings.find((b: any) => b && b.id === bookingId);
         setAlertedBookingComplete(false);
-        setTripCompleted(false);
+        console.log(alertedBookingComplete, myBooking.status)
 
         if (myBooking.status === "completed" && !alertedBookingComplete) {
+          console.log('what?')
           setAlertedBookingComplete(true);
           Alert.alert("Booking Completed", "The driver has marked this ride as completed.");
 
@@ -391,7 +380,6 @@ export default function PHome() {
           setMatchedDriver(null);
           setDestination(null);
           setShowBookingForm(false);
-          setTripCompleted(true);
 
           if (mapRef.current) {
             mapRef.current.postMessage(
@@ -487,44 +475,22 @@ export default function PHome() {
 
   const submitDriverRating = async () => {
     try {
-      const driverIdToRate = await AsyncStorage.getItem("driverIdToRate");
-      const bookingIdToRate = await AsyncStorage.getItem("bookingIdToRate");
-
-      if (!driverIdToRate || !bookingIdToRate) {
-        Alert.alert("Error", "No driver or booking ID found to rate.");
-        return;
-      }
-
-      const res = await fetch(`${API_BASE_URL}/api/feedback/rate-driver`, {
+      console.log(matchedDriver?.driverId,)
+      const response = await fetch(`${API_BASE_URL}/api/feedback/rate-driver`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          driverId: driverIdToRate,
+          driverId: matchedDriver?.driverId,
           rating: selectedRating,
         }),
       });
 
-      if (res.ok && notes) {
-        // Save the feedback separately if there's a note
-        await fetch(`${API_BASE_URL}/api/feedback/submit-feedback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bookingId: bookingIdToRate,
-            passengerId: await AsyncStorage.getItem("passengerId"),
-            driverId: driverIdToRate,
-            feedback: notes,
-          }),
-        });
-      }
 
-      if (res.ok) {
-        Alert.alert("Success", "Thank you for your feedback!");
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert("Success", "Thank you for rating the driver!");
         setShowRatingModal(false);
-        await AsyncStorage.removeItem("driverIdToRate");
-        await AsyncStorage.removeItem("bookingIdToRate");
       } else {
-        const data = await res.json();
         Alert.alert("Error", data.message || "Failed to submit rating.");
       }
     } catch (error) {
@@ -533,48 +499,13 @@ export default function PHome() {
     }
   };
 
-
-
   useEffect(() => {
     if (tripCompleted) {
       setShowRatingModal(true);
     }
   }, [tripCompleted]);
 
-  const reportOptions = [
-    "Overcharging",
-    "Harassment",
-    "Unproper Attire",
-    "Refusal to Convey Passenger",
-    "Other",
-  ];
 
-  const submitReport = async () => {
-    try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      const res = await fetch(`${API_BASE_URL}/api/feedback/submit-report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bookingId,
-          passengerId,
-          driverId: matchedDriver?.driverId,
-          reportType,
-          otherReport,
-        }),
-      });
-      if (res.ok) {
-        Alert.alert("Success", "Report submitted!");
-        setShowReportModal(false);
-      } else {
-        const data = await res.json();
-        Alert.alert("Error", data.message || "Failed to submit report.");
-      }
-    } catch (error) {
-      console.error("❌ Failed to submit report:", error);
-      Alert.alert("Error", "Something went wrong. Please try again.");
-    }
-  };
 
 
   if (loading || !location) return null;
@@ -594,7 +525,6 @@ export default function PHome() {
                   mapRef.current = ref;
                 }
               }}
-              pointerEvents={showReportModal ? "none" : "auto"}
               originWhitelist={["*"]}
               source={{ html: mapHtml }}
               javaScriptEnabled
@@ -676,14 +606,6 @@ export default function PHome() {
                         >
                           <Text style={{ color: "white" }}>Minimize</Text>
                         </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={() => setShowReportModal(true)}
-                          style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5 }}
-                        >
-                          <Text style={{ color: "white" }}>Report Driver</Text>
-                        </TouchableOpacity>
-
                         <TouchableOpacity
                           onPress={async () => {
                             try {
@@ -777,122 +699,12 @@ export default function PHome() {
               </TouchableOpacity>
             )}
 
-            {showRatingModal && (
-              <View style={styles.ratingModalOverlay}>
-                <View style={styles.ratingModal}>
-
-                  <TouchableOpacity
-                    style={styles.dismissButton}
-                    onPress={() => {
-                      setShowRatingModal(false);
-                      AsyncStorage.removeItem("driverIdToRate");
-                    }}
-                  >
-                    <Ionicons name="close" size={24} color="gray" />
-                  </TouchableOpacity>
-
-                  <Text style={styles.modalTitle}>Rate Your Driver</Text>
-
-                  <View style={styles.starsContainer}>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <TouchableOpacity
-                        key={star}
-                        onPress={() => setSelectedRating(star)}
-                      >
-                        <Ionicons
-                          name={selectedRating >= star ? "star" : "star-outline"}
-                          size={30}
-                          color="#FFD700"
-                        />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <TextInput
-                    style={styles.feedbackInput}
-                    placeholder="Leave a comment (optional)"
-                    multiline
-                    numberOfLines={3}
-                    onChangeText={(text) => setNotes(text)}
-                    value={notes}
-                  />
-
-                  <TouchableOpacity
-                    style={styles.submitButton}
-                    onPress={submitDriverRating}
-                  >
-                    <Text style={styles.submitButtonText}>Submit</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {showReportModal && (
-              <View style={styles.ratingModalOverlay}>
-                <View style={[styles.ratingModal, { alignItems: "stretch" }]}>
-                  <TouchableOpacity
-                    style={styles.dismissButton}
-                    onPress={() => setShowReportModal(false)}
-                  >
-                    <Ionicons name="close" size={24} color="gray" />
-                  </TouchableOpacity>
-
-                  <Text style={styles.modalTitle}>Report Driver</Text>
-
-                  <Text style={styles.modalLabel}>Select Report Type:</Text>
-                  <View style={styles.dropdownContainer}>
-                    <TouchableOpacity
-                      style={styles.dropdownButton}
-                      onPress={() => setShowDropdown(!showDropdown)}
-                    >
-                      <Text style={{ color: reportType ? "#000" : "#999" }}>
-                        {reportType || "Select a violation"}
-                      </Text>
-                      <Ionicons name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#999" />
-                    </TouchableOpacity>
-
-                    {showDropdown && (
-                      <View style={styles.dropdownMenu}>
-                        {reportOptions.map((option) => (
-                          <TouchableOpacity
-                            key={option}
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setReportType(option);
-                              setShowDropdown(false);
-                            }}
-                          >
-                            <Text style={{ color: "#000" }}>{option}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-
-
-                  {reportType === "Other" && (
-                    <TextInput
-                      style={styles.feedbackInput}
-                      placeholder="Describe the issue"
-                      multiline
-                      numberOfLines={3}
-                      value={otherReport}
-                      onChangeText={setOtherReport}
-                    />
-                  )}
-
-                  <TouchableOpacity
-                    style={[styles.submitButton, { backgroundColor: "#4CAF50" }]}
-                    onPress={submitReport}
-                  >
-                    <Text style={styles.submitButtonText}>Submit Report</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-
-
+            {/* <View style={styles.bottomNav}>
+              <TouchableOpacity onPress={() => router.push("/homepassenger/phome")}><Ionicons name="home" size={30} color="black" /><Text>Home</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push("/homepassenger/phistory")}><Ionicons name="document-text-outline" size={30} color="black" /><Text>History</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push("/homepassenger/pchats")}><Ionicons name="chatbubbles-outline" size={30} color="black" /><Text>Chats</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push("/homepassenger/pprofile")}><Ionicons name="person-outline" size={30} color="black" /><Text>Profile</Text></TouchableOpacity>
+            </View> */}
           </View>
         </View>
       </TouchableWithoutFeedback>
@@ -925,103 +737,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
-  ratingModalOverlay: {
-    position: "absolute",
-    top: -100,
-    left: 0,
-    right: 0,
-    bottom: 10,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 999,
-  },
-  ratingModal: {
-    width: "80%",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 20,
-    alignItems: "center",
-  },
-
-  dismissButton: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    zIndex: 10,
-  },
-
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 5,
-  },
-  starsContainer: {
-    flexDirection: "row",
-    marginBottom: 10,
-  },
-  feedbackInput: {
-    width: "100%",
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-    textAlignVertical: "top",
-  },
-  submitButton: {
-    backgroundColor: "#4caf50",
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  submitButtonText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-
-  modalLabel: {
-    marginTop: 5,
-    marginBottom: 5,
-    fontSize: 14,
-    color: "#333",
-    fontWeight: "500",
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    marginBottom: 10,
-    overflow: "hidden",
-  },
-  picker: {
-    height: 50,
-    padding: 0,
-    width: "100%",
-  },
-
-  dropdownContainer: { width: "100%", marginVertical: 5 },
-  dropdownButton: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 10,
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-  },
-  dropdownMenu: {
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    marginTop: 2,
-  },
-  dropdownItem: { padding: 10 },
-
-
-
   totalFare: { fontWeight: 'bold' },
   bookButton: { backgroundColor: '#000', borderRadius: 10, padding: 10 },
   bookButtonText: { color: '#FFF', fontWeight: 'bold' },

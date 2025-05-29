@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard, Image, BackHandler, ScrollView } from "react-native";
-import { Picker } from "@react-native-picker/picker";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  TouchableOpacity,
+  StatusBar,
+  TextInput,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Image,
+  BackHandler,
+  ScrollView
+} from "react-native";
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
@@ -40,13 +55,11 @@ export default function PHome() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [selectedRating, setSelectedRating] = useState(0);
   const [tripCompleted, setTripCompleted] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportType, setReportType] = useState("");
-  const [otherReport, setOtherReport] = useState("");
+
+
+  // NEW: For address names
   const [pickupName, setPickupName] = useState("");
   const [dropoffName, setDropoffName] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-
 
   // Reverse geocode for pick-up location
   useEffect(() => {
@@ -337,21 +350,6 @@ export default function PHome() {
   }, []);
 
   useEffect(() => {
-    const saveDriverId = async () => {
-      if (matchedDriver && bookingId) {
-        console.log("driver match");
-        await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
-        await AsyncStorage.setItem("bookingIdToRate", String(bookingId)); // 👈 Fix here
-        console.log(matchedDriver.driverId, bookingId);
-      }
-    };
-    saveDriverId();
-  }, [matchedDriver, bookingId]);
-
-
-
-
-  useEffect(() => {
     let interval;
     const pollForDriverMatch = async () => {
       if (!bookingId) return;
@@ -362,6 +360,11 @@ export default function PHome() {
         if (myBooking && myBooking.status === "accepted" && !bookingConfirmed) {
           setBookingConfirmed(true);
           Alert.alert("Driver Accepted!", "The driver has accepted your ride and is on the way!");
+          console.log(matchedDriver)
+          if (matchedDriver?.driverId) {
+            await AsyncStorage.setItem("driverIdToRate", matchedDriver.driverId);
+            console.log(matchedDriver?.driverId)
+          }
         }
       } catch (err) {
         // error polling
@@ -487,15 +490,15 @@ export default function PHome() {
 
   const submitDriverRating = async () => {
     try {
-      const driverIdToRate = await AsyncStorage.getItem("driverIdToRate");
-      const bookingIdToRate = await AsyncStorage.getItem("bookingIdToRate");
+      const driverIdToRate = await AsyncStorage.getItem("driverIdToRate");  // ✅ Always use saved ID
+      console.log("Driver ID for rating:", driverIdToRate);
 
-      if (!driverIdToRate || !bookingIdToRate) {
-        Alert.alert("Error", "No driver or booking ID found to rate.");
+      if (!driverIdToRate) {
+        Alert.alert("Error", "No driver ID found to rate.");
         return;
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/feedback/rate-driver`, {
+      const response = await fetch(`${API_BASE_URL}/api/feedback/rate-driver`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -504,27 +507,12 @@ export default function PHome() {
         }),
       });
 
-      if (res.ok && notes) {
-        // Save the feedback separately if there's a note
-        await fetch(`${API_BASE_URL}/api/feedback/submit-feedback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bookingId: bookingIdToRate,
-            passengerId: await AsyncStorage.getItem("passengerId"),
-            driverId: driverIdToRate,
-            feedback: notes,
-          }),
-        });
-      }
-
-      if (res.ok) {
-        Alert.alert("Success", "Thank you for your feedback!");
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert("Success", "Thank you for rating the driver!");
         setShowRatingModal(false);
-        await AsyncStorage.removeItem("driverIdToRate");
-        await AsyncStorage.removeItem("bookingIdToRate");
+        await AsyncStorage.removeItem("driverIdToRate");  // Clean up after use
       } else {
-        const data = await res.json();
         Alert.alert("Error", data.message || "Failed to submit rating.");
       }
     } catch (error) {
@@ -534,47 +522,13 @@ export default function PHome() {
   };
 
 
-
   useEffect(() => {
     if (tripCompleted) {
       setShowRatingModal(true);
     }
   }, [tripCompleted]);
 
-  const reportOptions = [
-    "Overcharging",
-    "Harassment",
-    "Unproper Attire",
-    "Refusal to Convey Passenger",
-    "Other",
-  ];
 
-  const submitReport = async () => {
-    try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      const res = await fetch(`${API_BASE_URL}/api/feedback/submit-report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bookingId,
-          passengerId,
-          driverId: matchedDriver?.driverId,
-          reportType,
-          otherReport,
-        }),
-      });
-      if (res.ok) {
-        Alert.alert("Success", "Report submitted!");
-        setShowReportModal(false);
-      } else {
-        const data = await res.json();
-        Alert.alert("Error", data.message || "Failed to submit report.");
-      }
-    } catch (error) {
-      console.error("❌ Failed to submit report:", error);
-      Alert.alert("Error", "Something went wrong. Please try again.");
-    }
-  };
 
 
   if (loading || !location) return null;
@@ -594,7 +548,6 @@ export default function PHome() {
                   mapRef.current = ref;
                 }
               }}
-              pointerEvents={showReportModal ? "none" : "auto"}
               originWhitelist={["*"]}
               source={{ html: mapHtml }}
               javaScriptEnabled
@@ -676,14 +629,6 @@ export default function PHome() {
                         >
                           <Text style={{ color: "white" }}>Minimize</Text>
                         </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={() => setShowReportModal(true)}
-                          style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5 }}
-                        >
-                          <Text style={{ color: "white" }}>Report Driver</Text>
-                        </TouchableOpacity>
-
                         <TouchableOpacity
                           onPress={async () => {
                             try {
@@ -827,72 +772,6 @@ export default function PHome() {
               </View>
             )}
 
-            {showReportModal && (
-              <View style={styles.ratingModalOverlay}>
-                <View style={[styles.ratingModal, { alignItems: "stretch" }]}>
-                  <TouchableOpacity
-                    style={styles.dismissButton}
-                    onPress={() => setShowReportModal(false)}
-                  >
-                    <Ionicons name="close" size={24} color="gray" />
-                  </TouchableOpacity>
-
-                  <Text style={styles.modalTitle}>Report Driver</Text>
-
-                  <Text style={styles.modalLabel}>Select Report Type:</Text>
-                  <View style={styles.dropdownContainer}>
-                    <TouchableOpacity
-                      style={styles.dropdownButton}
-                      onPress={() => setShowDropdown(!showDropdown)}
-                    >
-                      <Text style={{ color: reportType ? "#000" : "#999" }}>
-                        {reportType || "Select a violation"}
-                      </Text>
-                      <Ionicons name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#999" />
-                    </TouchableOpacity>
-
-                    {showDropdown && (
-                      <View style={styles.dropdownMenu}>
-                        {reportOptions.map((option) => (
-                          <TouchableOpacity
-                            key={option}
-                            style={styles.dropdownItem}
-                            onPress={() => {
-                              setReportType(option);
-                              setShowDropdown(false);
-                            }}
-                          >
-                            <Text style={{ color: "#000" }}>{option}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-
-
-                  {reportType === "Other" && (
-                    <TextInput
-                      style={styles.feedbackInput}
-                      placeholder="Describe the issue"
-                      multiline
-                      numberOfLines={3}
-                      value={otherReport}
-                      onChangeText={setOtherReport}
-                    />
-                  )}
-
-                  <TouchableOpacity
-                    style={[styles.submitButton, { backgroundColor: "#4CAF50" }]}
-                    onPress={submitReport}
-                  >
-                    <Text style={styles.submitButtonText}>Submit Report</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-
-
           </View>
         </View>
       </TouchableWithoutFeedback>
@@ -954,7 +833,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 5,
+    marginBottom: 10,
   },
   starsContainer: {
     flexDirection: "row",
@@ -979,48 +858,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
   },
-
-  modalLabel: {
-    marginTop: 5,
-    marginBottom: 5,
-    fontSize: 14,
-    color: "#333",
-    fontWeight: "500",
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    marginBottom: 10,
-    overflow: "hidden",
-  },
-  picker: {
-    height: 50,
-    padding: 0,
-    width: "100%",
-  },
-
-  dropdownContainer: { width: "100%", marginVertical: 5 },
-  dropdownButton: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 10,
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-  },
-  dropdownMenu: {
-    backgroundColor: "#FFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    marginTop: 2,
-  },
-  dropdownItem: { padding: 10 },
-
-
 
   totalFare: { fontWeight: 'bold' },
   bookButton: { backgroundColor: '#000', borderRadius: 10, padding: 10 },
