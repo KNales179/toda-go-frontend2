@@ -1,0 +1,26 @@
+{
+    "sourceFile": "app/screens/ChatRoom.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1757360845000,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1757362963055,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,7 +1,8 @@\n-import React from \"react\";\r\n import { View, Text } from \"react-native\";\r\n+import React, { useEffect } from \"react\";\r\n \r\n+\r\n export default function ChatRoom({ route }) {\r\n   const { bookingId, driverId, passengerId, role } = route.params || {};\r\n \r\n   return (\r\n"
+                },
+                {
+                    "date": 1757363039792,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,9 +1,20 @@\n import { View, Text } from \"react-native\";\r\n-import React, { useEffect } from \"react\";\r\n+import React from \"react\";\r\n+import { RouteProp } from \"@react-navigation/native\";\r\n \r\n+type ChatRoomRouteParams = {\r\n+  bookingId?: string;\r\n+  driverId?: string;\r\n+  passengerId?: string;\r\n+  role?: string;\r\n+};\r\n \r\n-export default function ChatRoom({ route }) {\r\n+type ChatRoomProps = {\r\n+  route: RouteProp<{ ChatRoom: ChatRoomRouteParams }, \"ChatRoom\">;\r\n+};\r\n+\r\n+export default function ChatRoom({ route }: ChatRoomProps) {\r\n   const { bookingId, driverId, passengerId, role } = route.params || {};\r\n \r\n   return (\r\n     <View style={{ flex: 1, padding: 16 }}>\r\n"
+                }
+            ],
+            "date": 1757360845000,
+            "name": "Commit-0",
+            "content": "import React from \"react\";\r\nimport { View, Text } from \"react-native\";\r\n\r\nexport default function ChatRoom({ route }) {\r\n  const { bookingId, driverId, passengerId, role } = route.params || {};\r\n\r\n  return (\r\n    <View style={{ flex: 1, padding: 16 }}>\r\n      <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n        Chat Room\r\n      </Text>\r\n      <Text>Booking: {bookingId}</Text>\r\n      <Text>Driver: {driverId}</Text>\r\n      <Text>Passenger: {passengerId}</Text>\r\n      <Text>Role: {role}</Text>\r\n    </View>\r\n  );\r\n}\r\n"
+        }
+    ]
+}

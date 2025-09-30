@@ -1,0 +1,18 @@
+{
+    "sourceFile": "app/chat/[bookingId].tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1757329908378,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1757329908378,
+            "name": "Commit-0",
+            "content": "// app/chat/[bookingId].tsx\r\nimport React, { useEffect } from \"react\";\r\nimport { View, Text, StyleSheet, Dimensions } from \"react-native\";\r\nimport { useLocalSearchParams } from \"expo-router\";\r\n\r\nconst { width, height } = Dimensions.get(\"window\");\r\n\r\nexport default function ChatRoom() {\r\n  const params = useLocalSearchParams();\r\n\r\n  useEffect(() => {\r\n    console.log(\"ChatRoom params:\", params);\r\n  }, [params]);\r\n\r\n  const bookingId = params.bookingId;\r\n  const driverId = params.driverId;\r\n  const passengerId = params.passengerId;\r\n  const role = params.role;\r\n\r\n  return (\r\n    <View style={styles.container}>\r\n      <Text style={styles.title}>ChatRoom Debug</Text>\r\n      <Text style={styles.line}>bookingId: {String(bookingId ?? \"—\")}</Text>\r\n      <Text style={styles.line}>driverId: {String(driverId ?? \"—\")}</Text>\r\n      <Text style={styles.line}>passengerId: {String(passengerId ?? \"—\")}</Text>\r\n      <Text style={styles.line}>role: {String(role ?? \"—\")}</Text>\r\n    </View>\r\n  );\r\n}\r\n\r\nconst styles = StyleSheet.create({\r\n  container: {\r\n    flex: 1,\r\n    padding: 16,\r\n    backgroundColor: \"#fff\",\r\n    width,\r\n    height,\r\n  },\r\n  title: {\r\n    fontWeight: \"700\",\r\n    fontSize: 20,\r\n    marginBottom: 12,\r\n  },\r\n  line: {\r\n    fontSize: 16,\r\n    marginBottom: 6,\r\n  },\r\n});\r\n"
+        }
+    ]
+}

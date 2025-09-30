@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 10,
+            "activePatchIndex": 12,
             "patches": [
                 {
                     "date": 1742703388027,
@@ -48,6 +48,14 @@
                 {
                     "date": 1748463421663,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,16 +1,12 @@\n import { Stack } from \"expo-router\";\r\n import { LocationProvider } from \"./location/GlobalLocation\"; \r\n-import { View, StatusBar } from \"react-native\";\r\n \r\n export default function RootLayout() {\r\n \r\n return ( \r\n     <LocationProvider>\r\n       <Stack screenOptions={{ headerShown: false }}>\r\n-        <View style={{ paddingTop: 30 }}>\r\n-          <StatusBar barStyle=\"light-content\" translucent={true} backgroundColor=\"black\" />\r\n-        </View>\r\n       </Stack>\r\n     </LocationProvider>\r\n   );\r\n }\n\\ No newline at end of file\n"
+                },
+                {
+                    "date": 1755122084715,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,12 +1,42 @@\n import { Stack } from \"expo-router\";\r\n-import { LocationProvider } from \"./location/GlobalLocation\"; \r\n+import { LocationProvider } from \"./location/GlobalLocation\";\r\n+import { useEffect } from \"react\";\r\n+import { AppState } from \"react-native\";\r\n+import { API_BASE_URL } from \"../config\"; // <-- adjust to \"./config\" if config.ts is inside /app\r\n \r\n+const BASE = API_BASE_URL.replace(/\\/$/, \"\");\r\n+const WAKE_URL = `${BASE}/health`;\r\n+\r\n+function wakeBackend() {\r\n+  try {\r\n\\ No newline at end of file\n+    const controller = new AbortController();\r\n+    const id = setTimeout(() => controller.abort(), 3000); // don't block UI\r\n+    fetch(WAKE_URL, { method: \"GET\", signal: controller.signal, cache: \"no-store\" })\r\n+      .catch(() => {})\r\n+      .finally(() => clearTimeout(id));\r\n+\r\n+    // Optional: also touch Mongo so it's warm too (fire-and-forget).\r\n+    setTimeout(() => { fetch(`${BASE}/warmup`).catch(() => {}); }, 400);\r\n+  } catch {\r\n+    // ignore; it's just a warmup\r\n+  }\r\n+}\r\n+\r\n export default function RootLayout() {\r\n+  useEffect(() => {\r\n+    // Wake immediately on app start\r\n+    wakeBackend();\r\n \r\n-return ( \r\n+    // Wake again whenever app returns to foreground\r\n+    const sub = AppState.addEventListener(\"change\", (s) => {\r\n+      if (s === \"active\") wakeBackend();\r\n+    });\r\n+    return () => sub.remove();\r\n+  }, []);\r\n+\r\n+  return (\r\n     <LocationProvider>\r\n-      <Stack screenOptions={{ headerShown: false }}>\r\n-      </Stack>\r\n+      <Stack screenOptions={{ headerShown: false }} />\r\n     </LocationProvider>\r\n   );\r\n-}\n+}\r\n"
+                },
+                {
+                    "date": 1755122091460,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -38,5 +38,5 @@\n     <LocationProvider>\r\n       <Stack screenOptions={{ headerShown: false }} />\r\n     </LocationProvider>\r\n   );\r\n-}\n\\ No newline at end of file\n+}\r\n"
                 }
             ],
             "date": 1742703388027,

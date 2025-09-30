@@ -36,6 +36,7 @@ yarn-error.*
 *.tsbuildinfo
 
 toda-go-backend/
+.history/
 
 
 app-example

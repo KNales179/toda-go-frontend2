@@ -38,32 +38,47 @@ export default function PRegister() {
     }
 
     try {
-      console.log("API_BASE_URL is", API_BASE_URL);
+      const payload = {
+        firstName: firstname,
+        middleName: middlename,
+        lastName: lastname,
+        birthday,
+        email,
+        password,
+      };
+
+      console.log("📤 handleRegister → sending payload:", payload);
+
       const response = await fetch(`${API_BASE_URL}/api/auth/passenger/register-passenger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: firstname,
-          middleName: middlename,
-          lastName: lastname,
-          birthday,
-          email,
-          password
-        })
+        body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      console.log("📥 handleRegister → raw response:", text);
+
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+
+      console.log("📥 handleRegister → parsed response:", data);
 
       if (response.ok) {
-        Alert.alert('Success', data.message);
+        Alert.alert('Success', data.message || "Registered successfully");
         router.push('/login_and_reg/plogin');
       } else {
         Alert.alert('Error', data.error || 'Registration failed');
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error("❌ handleRegister → error:", error);
       Alert.alert('Error', 'Network request failed');
     }
   };
+
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios'); 

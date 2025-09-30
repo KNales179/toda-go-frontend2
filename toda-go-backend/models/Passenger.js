@@ -16,6 +16,9 @@ const passengerSchema = new mongoose.Schema({
   address: { type: String },
   brgy_Id: { type: Number },
   contact: { type: String },
+  phone: { type: String },           
+  eContactName: { type: String },    
+  eContactPhone: { type: String },   
   civil_status: { type: String },
   profileImage: { type: String, default: "" },
   homeAddress: { type:String },
@@ -23,6 +26,7 @@ const passengerSchema = new mongoose.Schema({
   // From original app
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
+  isVerified: { type: Boolean, default: false }
 });
 
 // 🔒 Hash password before save

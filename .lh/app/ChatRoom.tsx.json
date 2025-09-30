@@ -1,0 +1,26 @@
+{
+    "sourceFile": "app/ChatRoom.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1757363373502,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1757363506421,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,18 +1,18 @@\n-import { View, Text } from \"react-native\";\r\n-import { useLocalSearchParams } from \"expo-router\";\r\n+import { useState, useCallback } from \"react\";\r\n+import { GiftedChat } from \"react-native-gifted-chat\";\r\n \r\n export default function ChatRoom() {\r\n-  const { bookingId, driverId, passengerId, role } = useLocalSearchParams();\r\n+  const [messages, setMessages] = useState([]);\r\n \r\n+  const onSend = useCallback((newMessages = []) => {\r\n+    setMessages((previous) => GiftedChat.append(previous, newMessages));\r\n+  }, []);\r\n+\r\n   return (\r\n-    <View style={{ flex: 1, padding: 16 }}>\r\n-      <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n-        Chat Room\r\n-      </Text>\r\n-      <Text>Booking: {bookingId}</Text>\r\n-      <Text>Driver: {driverId}</Text>\r\n-      <Text>Passenger: {passengerId}</Text>\r\n-      <Text>Role: {role}</Text>\r\n-    </View>\r\n+    <GiftedChat\r\n+      messages={messages}\r\n+      onSend={(messages) => onSend(messages)}\r\n+      user={{ _id: \"passenger123\" }} // replace with passengerId/driverId\r\n+    />\r\n   );\r\n }\r\n"
+                },
+                {
+                    "date": 1757363516077,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,18 +1,18 @@\n-import { useState, useCallback } from \"react\";\r\n-import { GiftedChat } from \"react-native-gifted-chat\";\r\n+import { View, Text } from \"react-native\";\r\n+import { useLocalSearchParams } from \"expo-router\";\r\n \r\n export default function ChatRoom() {\r\n-  const [messages, setMessages] = useState([]);\r\n+  const { bookingId, driverId, passengerId, role } = useLocalSearchParams();\r\n \r\n-  const onSend = useCallback((newMessages = []) => {\r\n-    setMessages((previous) => GiftedChat.append(previous, newMessages));\r\n-  }, []);\r\n-\r\n   return (\r\n-    <GiftedChat\r\n-      messages={messages}\r\n-      onSend={(messages) => onSend(messages)}\r\n-      user={{ _id: \"passenger123\" }} // replace with passengerId/driverId\r\n-    />\r\n+    <View style={{ flex: 1, padding: 16 }}>\r\n+      <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n+        Chat Room\r\n+      </Text>\r\n+      <Text>Booking: {bookingId}</Text>\r\n+      <Text>Driver: {driverId}</Text>\r\n+      <Text>Passenger: {passengerId}</Text>\r\n+      <Text>Role: {role}</Text>\r\n+    </View>\r\n   );\r\n }\r\n"
+                }
+            ],
+            "date": 1757363373502,
+            "name": "Commit-0",
+            "content": "import { View, Text } from \"react-native\";\r\nimport { useLocalSearchParams } from \"expo-router\";\r\n\r\nexport default function ChatRoom() {\r\n  const { bookingId, driverId, passengerId, role } = useLocalSearchParams();\r\n\r\n  return (\r\n    <View style={{ flex: 1, padding: 16 }}>\r\n      <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n        Chat Room\r\n      </Text>\r\n      <Text>Booking: {bookingId}</Text>\r\n      <Text>Driver: {driverId}</Text>\r\n      <Text>Passenger: {passengerId}</Text>\r\n      <Text>Role: {role}</Text>\r\n    </View>\r\n  );\r\n}\r\n"
+        }
+    ]
+}

@@ -40,6 +40,9 @@ export default function DriverRegister() {
   const [showDriverDate, setShowDriverDate] = useState(false);
   const [driverPhone, setDriverPhone] = useState("");
   const [experienceYears, setExperienceYears] = useState("");
+  const [capacity, setCapacity] = useState<number>(4);
+  const [trikeColor, setTrikeColor] = useState<"yellow" | "green" | null>(null);
+
 
   // Account
   const [email, setEmail] = useState("");
@@ -187,6 +190,9 @@ export default function DriverRegister() {
     formData.append("driverPhone", driverPhone);
 
     formData.append("experienceYears", experienceYears);
+    formData.append("capacity", String(capacity));
+    formData.append("trikeColor", trikeColor ?? "");  
+    
 
     // 📩 Email/password handling:
     if (role === "Driver") {
@@ -404,6 +410,58 @@ export default function DriverRegister() {
         </TouchableOpacity>
         <TextInput style={styles.input} placeholder="Kung hindi saang  lugar ikaw bumoboto?" value={votingLocation} onChangeText={setVotingLocation} />
 
+        {/* Tricycle Info */}
+        <Text style={styles.header}>Tricycle Info</Text>
+        <View style={{flexDirection:"row", alignContent:"center", justifyContent:"space-between"}}>
+          <View style={{}}>
+            <Text style={styles.header2}>Tricycle Capacity</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+              {[4,6].map(n => (
+                <TouchableOpacity
+                  key={n}
+                  onPress={() => setCapacity(n)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: capacity === n ? "#5089A3" : "#ccc",
+                    backgroundColor: capacity === n ? "#5089A3" : "#fff",
+                  }}
+                >
+                  <Text style={{ color: capacity === n ? "#fff" : "#000" }}>{n}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          <View>
+            <Text style={styles.header2}>Tricycle Color</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+              {(["yellow", "green"] as const).map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setTrikeColor(c)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: trikeColor === c ? "#5089A3" : "#ccc",
+                    backgroundColor: trikeColor === c ? "#5089A3" : "#fff",
+                  }}
+                >
+                  <Text style={{ color: trikeColor === c ? "#fff" : "#000" }}>
+                    {c.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+        
+
+
+
         {/* Account Info */}
         <Text style={styles.header}>Account</Text>
         <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoComplete="off" importantForAutofill="no"/>
@@ -525,6 +583,7 @@ const styles = StyleSheet.create({
   
   title: { fontSize: 20, fontWeight: "bold", marginBottom: 10 },
   header: { marginTop: 20, fontWeight: "bold", fontSize: 16 },
+  header2: { marginTop: 20, fontWeight: "bold", fontSize: 13 },
   input: {
     backgroundColor: "#fff",
     borderWidth: 1,

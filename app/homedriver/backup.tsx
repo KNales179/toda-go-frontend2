@@ -9,7 +9,6 @@ import {
   StatusBar,
   Alert,
   BackHandler,
-  AppState
 } from 'react-native';
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
@@ -19,8 +18,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import * as Location from 'expo-location';
-import type { AppStateStatus } from "react-native";
-import ChatNotice from "../../components/ChatNotice";
 
 type LatLng = { lat: number; lng: number };
 type Phase = "idle" | "toPickup" | "toDropoff";
@@ -45,31 +42,8 @@ export default function DHome() {
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
   const [previewBooking, setPreviewBooking] = useState<any | null>(null); // tapped PoPas preview
 
-  const [currentBooking, setCurrentBooking] = useState<any>(null);
-  const status = currentBooking?.status as
-    | 'accepted'
-    | 'pending'
-    | 'completed'
-    | 'canceled'
-    | undefined;
-
-  const passengerId = currentBooking?.passengerId;
-  const [driverId, setDriverId] = useState<string | null>(null);
-  useEffect(() => {
-    AsyncStorage.getItem("driverId")
-      .then((v) => setDriverId(v))
-      .catch(() => setDriverId(null));
-  }, []);
-
-
-  const canShowChatNotice =
-    status === 'accepted' && !!currentBooking?._id && !!driverId && !!passengerId;
-
-
   const [driverLoc, setDriverLoc] = useState<LatLng | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
-  const heartbeatTimerRef = useRef<number | null>(null);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const bookingIdRef = useRef<string | null>(null);
   const dbg = (...args: any[]) => console.log("[DHOME]", ...args);
@@ -203,7 +177,7 @@ export default function DHome() {
                 if (msg.pickup) {
                   pickupMarker = L.marker([msg.pickup.latitude, msg.pickup.longitude], {
                     icon: L.icon({
-                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/yellow-dot.png',
+                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
                       iconSize: [30, 30],
                     })
                   }).addTo(map);
@@ -314,17 +288,6 @@ export default function DHome() {
     return () => sub?.remove();
   }, [phase]);
 
-  // {canShowChatNotice && (
-  //   <ChatNotice
-  //     bookingId={currentBooking._id}
-  //     role="driver"
-  //     onGoToChat={() =>
-  //       router.push(`/chat/${bookingId}?driverId=${driverId}&passengerId=${passengerId}&role=passenger`)
-  //     }
-  //   />
-  // )}
-
-
   // draw routes depending on phase
   useEffect(() => {
     const run = async () => {
@@ -342,31 +305,6 @@ export default function DHome() {
     };
     run();
   }, [driverLoc, phase, incomingBooking]);
-
-  const sendHeartbeat = async () => {
-    try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId) return;
-
-      // Prefer live GPS (driverLoc); fallback to initial location
-      const center = driverLoc
-        ? { lat: driverLoc.lat, lng: driverLoc.lng }
-        : (location ? { lat: location.latitude, lng: location.longitude } : null);
-
-      if (!center) return;
-
-      await fetch(`${API_BASE_URL}/api/driver-heartbeat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          driverId,
-          location: { lat: center.lat, lng: center.lng },
-        }),
-      });
-    } catch (e) {
-      console.log("❌ heartbeat failed", e);
-    }
-  };
 
   // send driver status (online/offline)
   const updateDriverStatus = async (newStatus: boolean) => {
@@ -393,47 +331,6 @@ export default function DHome() {
       console.error("❌ Failed to update driver status:", error);
     }
   };
-
-  useEffect(() => {
-    const handleAppState = (nextState: AppStateStatus) => {
-      appStateRef.current = nextState;
-      const isForeground = nextState === "active";
-
-      // Restart/stop timer based on online + foreground
-      if (isOnline && isForeground) {
-        if (!heartbeatTimerRef.current) {
-          // small jitter to avoid synchronized calls
-          const start = () => {
-            sendHeartbeat();
-            heartbeatTimerRef.current = setInterval(() => {
-              // add 1–2s jitter to 20s
-              const jitter = 1000 + Math.floor(Math.random() * 1000);
-              setTimeout(sendHeartbeat, jitter);
-            }, 20000);
-          };
-          start();
-        }
-      } else {
-        if (heartbeatTimerRef.current) {
-          clearInterval(heartbeatTimerRef.current);
-          heartbeatTimerRef.current = null;
-        }
-      }
-    };
-
-    const sub = AppState.addEventListener("change", handleAppState);
-    // initial kick if already online & active
-    handleAppState(AppState.currentState);
-
-    return () => {
-      sub.remove?.();
-      if (heartbeatTimerRef.current) {
-        clearInterval(heartbeatTimerRef.current);
-        heartbeatTimerRef.current = null;
-      }
-    };
-  }, [isOnline, driverLoc]); // driverLoc in deps keeps heartbeats sending fresh coords
-
 
   // poll bookings assigned to this driver (build activeJobs; keep accepted focused)
   useEffect(() => {
@@ -649,48 +546,45 @@ export default function DHome() {
     let timer: any;
 
     const fetchQueue = async () => {
-    try {
-      if (!isOnline) {
-        setQueue([]);
-        mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
-        return;
+      try {
+        if (!isOnline) {
+          setQueue([]);
+          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          return;
+        }
+
+        const isFull = capacity !== null && activeJobs.length >= capacity;
+        if (isFull) {
+          setQueue([]);
+          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          return;
+        }
+
+        const center = driverLoc
+          ? { lat: driverLoc.lat, lng: driverLoc.lng }
+          : (location ? { lat: location.latitude, lng: location.longitude } : null);
+        if (!center) return;
+
+        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10`;
+        const r = await fetch(url);
+        const data = await r.json();
+        const list = Array.isArray(data) ? data : [];
+
+        setQueue(list);
+
+        // paint PoPas markers regardless of confirmed/phase (since not full)
+        mapRef.current?.postMessage(JSON.stringify({
+          type: 'setWaitingMarkers',
+          items: list.map((q: any) => ({
+            id: q.id,
+            lat: q.pickup.lat,
+            lng: q.pickup.lng,
+          })),
+        }));
+      } catch (e) {
+        console.log("❌ queue fetch error", e);
       }
-
-      const isFull = capacity !== null && activeJobs.length >= capacity;
-      if (isFull) {
-        setQueue([]);
-        mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
-        return;
-      }
-
-      const center = driverLoc
-        ? { lat: driverLoc.lat, lng: driverLoc.lng }
-        : (location ? { lat: location.latitude, lng: location.longitude } : null);
-      if (!center) return;
-
-      // 🔥 Inserted here
-      const driverId = await AsyncStorage.getItem("driverId");
-      const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${driverId ? `&driverId=${driverId}` : ""}`;
-
-      const r = await fetch(url);
-      const data = await r.json();
-      const list = Array.isArray(data) ? data : [];
-
-      setQueue(list);
-
-      mapRef.current?.postMessage(JSON.stringify({
-        type: 'setWaitingMarkers',
-        items: list.map((q: any) => ({
-          id: q.id,
-          lat: q.pickup.lat,
-          lng: q.pickup.lng,
-        })),
-      }));
-    } catch (e) {
-      console.log("❌ queue fetch error", e);
-    }
-  };
-
+    };
 
     fetchQueue();
     timer = setInterval(fetchQueue, 3000);
@@ -857,29 +751,6 @@ export default function DHome() {
             <>
               <Text>🕒 Waiting for pickup...</Text>
               <TouchableOpacity
-                onPress={() => {
-                  router.push({
-                    pathname: "/ChatRoom",
-                    params: {
-                      bookingId: String(incomingBooking.id),
-                      driverId: driverId,
-                      passengerId: String(incomingBooking.passengerId),
-                      role: "driver",
-                    },
-                  });
-                }}
-                style={{
-                  marginTop: 8,
-                  backgroundColor: "#007bff",
-                  paddingVertical: 8,
-                  paddingHorizontal: 16,
-                  borderRadius: 8,
-                  alignSelf: "flex-start",
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "bold" }}>💬 Chat</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 style={{ backgroundColor: '#4caf50', padding: 10, marginTop: 10, borderRadius: 5 }}
                 onPress={() => { setPhase("toDropoff"); setPickedUp(true); }}
               >
@@ -889,29 +760,6 @@ export default function DHome() {
           ) : (
             <>
               <Text>🟢 Passenger picked up! Ready for drop-off.</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  router.push({
-                    pathname: "/ChatRoom",
-                    params: {
-                      bookingId: String(incomingBooking.id),
-                      driverId: driverId,
-                      passengerId: String(incomingBooking.passengerId),
-                      role: "driver",
-                    },
-                  });
-                }}
-                style={{
-                  marginTop: 8,
-                  backgroundColor: "#007bff",
-                  paddingVertical: 8,
-                  paddingHorizontal: 16,
-                  borderRadius: 8,
-                  alignSelf: "flex-start",
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "bold" }}>💬 Chat</Text>
-              </TouchableOpacity>
               <TouchableOpacity
                 style={{ backgroundColor: '#2196f3', padding: 10, marginTop: 10, borderRadius: 5 }}
                 onPress={() => {
@@ -938,29 +786,6 @@ export default function DHome() {
         <View style={styles.popup}>
           <Text style={{ fontWeight: 'bold', color: '#ff9800' }}>💰 Confirm Payment</Text>
           <Text>Ask the passenger for payment and confirm here.</Text>
-          <TouchableOpacity
-            onPress={() => {
-              router.push({
-                pathname: "/ChatRoom",
-                params: {
-                  bookingId: String(incomingBooking.id),
-                  driverId: driverId,
-                  passengerId: String(incomingBooking.passengerId),
-                  role: "driver",
-                },
-              });
-            }}
-            style={{
-              marginTop: 8,
-              backgroundColor: "#007bff",
-              paddingVertical: 8,
-              paddingHorizontal: 16,
-              borderRadius: 8,
-              alignSelf: "flex-start",
-            }}
-          >
-            <Text style={{ color: "#fff", fontWeight: "bold" }}>💬 Chat</Text>
-          </TouchableOpacity>
           <TouchableOpacity
             style={{ backgroundColor: '#4caf50', padding: 10, marginTop: 10, borderRadius: 5 }}
             onPress={async () => {

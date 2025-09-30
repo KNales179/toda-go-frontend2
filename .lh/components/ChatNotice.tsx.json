@@ -1,0 +1,18 @@
+{
+    "sourceFile": "components/ChatNotice.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1757088058864,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1757088058863,
+            "name": "Commit-0",
+            "content": "// components/ChatNotice.tsx\r\nimport React, { useEffect, useState } from \"react\";\r\nimport { View, Text, TouchableOpacity, StyleSheet } from \"react-native\";\r\nimport AsyncStorage from \"@react-native-async-storage/async-storage\";\r\nimport { Ionicons } from \"@expo/vector-icons\";\r\n\r\ntype Props = {\r\n  bookingId: string;\r\n  role: \"driver\" | \"passenger\";\r\n  onGoToChat: () => void; // navigation handler from parent\r\n};\r\n\r\nconst KEY = (id: string) => `chatNoticeDismissed:${id}`;\r\n\r\nexport default function ChatNotice({ bookingId, role, onGoToChat }: Props) {\r\n  const [hidden, setHidden] = useState<boolean>(true);\r\n\r\n  useEffect(() => {\r\n    let mounted = true;\r\n    (async () => {\r\n      try {\r\n        const val = await AsyncStorage.getItem(KEY(bookingId));\r\n        if (mounted) setHidden(val === \"1\");\r\n      } catch {\r\n        if (mounted) setHidden(false);\r\n      }\r\n    })();\r\n    return () => { mounted = false; };\r\n  }, [bookingId]);\r\n\r\n  if (hidden) return null;\r\n\r\n  const copy =\r\n    role === \"driver\"\r\n      ? {\r\n          title: \"Booking accepted.\",\r\n          body: \"Pwede mong i-chat ang pasahero para kumpirmahin ang eksaktong pickup point at detalye.\",\r\n          cta: \"Buksan ang chats ⇒\",\r\n        }\r\n      : {\r\n          title: \"Driver found!\",\r\n          body: \"Pwede kang makipag-chat sa driver para mas malinaw ang direksyon at lokasyon ng tagpuan.\",\r\n          cta: \"Buksan ang chats ⇒\",\r\n        };\r\n\r\n  const dismiss = async () => {\r\n    setHidden(true);\r\n    try { await AsyncStorage.setItem(KEY(bookingId), \"1\"); } catch {}\r\n  };\r\n\r\n  return (\r\n    <View style={styles.wrap}>\r\n      <View style={styles.left}>\r\n        <Ionicons name=\"chatbubbles-outline\" size={22} />\r\n      </View>\r\n\r\n      <View style={styles.center}>\r\n        <Text style={styles.title}>{copy.title}</Text>\r\n        <Text style={styles.body}>{copy.body}</Text>\r\n        <TouchableOpacity onPress={onGoToChat} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>\r\n          <Text style={styles.link}>{copy.cta}</Text>\r\n        </TouchableOpacity>\r\n      </View>\r\n\r\n      <TouchableOpacity onPress={dismiss} style={styles.right} accessibilityLabel=\"Isara ang paalala\">\r\n        <Ionicons name=\"close\" size={18} />\r\n      </TouchableOpacity>\r\n    </View>\r\n  );\r\n}\r\n\r\nconst styles = StyleSheet.create({\r\n  wrap: {\r\n    marginHorizontal: 12,\r\n    marginTop: 10,\r\n    padding: 12,\r\n    borderRadius: 12,\r\n    borderWidth: 1,\r\n    borderColor: \"#ddd\",\r\n    backgroundColor: \"#F8FAFF\",\r\n    flexDirection: \"row\",\r\n    alignItems: \"flex-start\",\r\n    gap: 10,\r\n  },\r\n  left: { paddingTop: 2 },\r\n  center: { flex: 1 },\r\n  right: { padding: 6 },\r\n  title: { fontWeight: \"700\", fontSize: 14, marginBottom: 2 },\r\n  body: { fontSize: 13, color: \"#333\" },\r\n  link: { marginTop: 6, fontWeight: \"700\", fontSize: 13, textDecorationLine: \"underline\" },\r\n});\r\n"
+        }
+    ]
+}

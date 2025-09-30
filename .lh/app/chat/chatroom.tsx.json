@@ -1,0 +1,38 @@
+{
+    "sourceFile": "app/chat/chatroom.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 5,
+            "patches": [
+                {
+                    "date": 1757328973350,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1757329021725,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -3,21 +3,20 @@\n import { Ionicons, MaterialIcons } from \"@expo/vector-icons\";\r\n import { router } from 'expo-router'; \r\n const { width, height } = Dimensions.get(\"window\");\r\n \r\n-export default function PHistory() {\r\n+export default function ChatRoomDebug() {\r\n   return (\r\n-    <View style={styles.container}>\r\n-      <View style={styles.topBar}>\r\n-        <Text style={styles.heading}>HISTORY</Text>\r\n+      <View style={{ flex: 1, padding: 16 }}>\r\n+        <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n+          ChatRoom Debug\r\n+        </Text>\r\n+        <Text>bookingId: {String(bookingId ?? \"—\")}</Text>\r\n+        <Text>driverId: {String(driverId ?? \"—\")}</Text>\r\n+        <Text>passengerId: {String(passengerId ?? \"—\")}</Text>\r\n+        <Text>role: {String(role ?? \"—\")}</Text>\r\n       </View>\r\n-\r\n-      <View style={styles.container2}>\r\n-        <Image source={require('../../assets/images/tricycle.png')} style={styles.chatImage} />\r\n-        <Text style={styles.message}>Mag Book na para mag ka history ka.</Text>\r\n-      </View>\r\n-    </View>\r\n-  );\r\n+    );\r\n }\r\n \r\n const styles = StyleSheet.create({\r\n   container: { flex: 1, paddingHorizontal: 20 },\r\n"
+                },
+                {
+                    "date": 1757329041974,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -4,8 +4,19 @@\n import { router } from 'expo-router'; \r\n const { width, height } = Dimensions.get(\"window\");\r\n \r\n export default function ChatRoomDebug() {\r\n+  const params = useLocalSearchParams();\r\n+  \r\n+  useEffect(() => {\r\n+    console.log(\"ChatRoom params:\", params);\r\n+  }, [params]);\r\n+\r\n+  const bookingId = params.bookingId;\r\n+  const driverId = params.driverId;\r\n+  const passengerId = params.passengerId;\r\n+  const role = params.role;\r\n+  \r\n   return (\r\n       <View style={{ flex: 1, padding: 16 }}>\r\n         <Text style={{ fontWeight: \"700\", fontSize: 18, marginBottom: 8 }}>\r\n           ChatRoom Debug\r\n"
+                },
+                {
+                    "date": 1757329061847,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,5 +1,5 @@\n-import React from 'react';\r\n+import React, { useEffect } from \"react\";\r\n import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image } from 'react-native';\r\n import { Ionicons, MaterialIcons } from \"@expo/vector-icons\";\r\n import { router } from 'expo-router'; \r\n const { width, height } = Dimensions.get(\"window\");\r\n"
+                },
+                {
+                    "date": 1757329079624,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,9 +1,8 @@\n import React, { useEffect } from \"react\";\r\n import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image } from 'react-native';\r\n-import { Ionicons, MaterialIcons } from \"@expo/vector-icons\";\r\n-import { router } from 'expo-router'; \r\n const { width, height } = Dimensions.get(\"window\");\r\n+import { useLocalSearchParams } from \"expo-router\";\r\n \r\n export default function ChatRoomDebug() {\r\n   const params = useLocalSearchParams();\r\n   \r\n"
+                },
+                {
+                    "date": 1757329085879,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,6 +1,6 @@\n import React, { useEffect } from \"react\";\r\n-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image } from 'react-native';\r\n+import { View, Text, StyleSheet, Dimensions } from 'react-native';\r\n const { width, height } = Dimensions.get(\"window\");\r\n import { useLocalSearchParams } from \"expo-router\";\r\n \r\n export default function ChatRoomDebug() {\r\n"
+                }
+            ],
+            "date": 1757328973350,
+            "name": "Commit-0",
+            "content": "import React from 'react';\r\nimport { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image } from 'react-native';\r\nimport { Ionicons, MaterialIcons } from \"@expo/vector-icons\";\r\nimport { router } from 'expo-router'; \r\nconst { width, height } = Dimensions.get(\"window\");\r\n\r\nexport default function PHistory() {\r\n  return (\r\n    <View style={styles.container}>\r\n      <View style={styles.topBar}>\r\n        <Text style={styles.heading}>HISTORY</Text>\r\n      </View>\r\n\r\n      <View style={styles.container2}>\r\n        <Image source={require('../../assets/images/tricycle.png')} style={styles.chatImage} />\r\n        <Text style={styles.message}>Mag Book na para mag ka history ka.</Text>\r\n      </View>\r\n    </View>\r\n  );\r\n}\r\n\r\nconst styles = StyleSheet.create({\r\n  container: { flex: 1, paddingHorizontal: 20 },\r\n  topBar: { marginTop: 40, marginBottom: 20 }, // Adjust top margin as needed\r\n  heading: { fontWeight: 'bold', fontSize: 22 },\r\n  container2: { flex: 1, justifyContent: 'center', alignItems: 'center' },\r\n  chatImage: { width: 150, height: 150, marginBottom: 20, resizeMode: 'contain' },\r\n  message: { textAlign: 'center', fontSize: 14, color: '#333' },\r\n  bottomNav: { position: \"absolute\", bottom: 0, flexDirection: \"row\", justifyContent: \"space-around\", width: width, height: 70, backgroundColor: \"white\", borderTopLeftRadius: 30, borderTopRightRadius: 30, alignItems: \"center\", borderWidth: 1, borderColor: \"black\" },\r\n});\r\n"
+        }
+    ]
+}

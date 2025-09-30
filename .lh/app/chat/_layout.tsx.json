@@ -1,0 +1,18 @@
+{
+    "sourceFile": "app/chat/_layout.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1757327680353,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1757327680353,
+            "name": "Commit-0",
+            "content": "// app/chat/_layout.tsx\r\nimport { Stack } from \"expo-router\";\r\n\r\nexport default function ChatLayout() {\r\n  return (\r\n    <Stack>\r\n      <Stack.Screen \r\n        name=\"room\" \r\n        options={{ \r\n          title: \"Chat Room\",\r\n          headerShown: true \r\n        }} \r\n      />\r\n    </Stack>\r\n  );\r\n}\r\n"
+        }
+    ]
+}

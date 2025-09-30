@@ -6,6 +6,7 @@ const DriverSchema = new mongoose.Schema({
   profileID: { type: String, required: true },
   email: { type: String, unique: true, sparse: true },
   password: { type: String },
+  isVerified: { type: Boolean, default: false },
 
   franchiseNumber: { type: String, required: true },
   todaName: { type: String, required: true },
@@ -20,7 +21,7 @@ const DriverSchema = new mongoose.Schema({
   driverBirthdate: { type: String, required: true },
   driverPhone: { type: String, required: true },
   homeAddress: { type:String },
-
+  licenseId: { type: String },
   experienceYears: { type: String, enum: ["1-5 taon", "6-10 taon", "16-20 taon", "20 taon pataas"], required: true },
   rating: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
@@ -31,6 +32,14 @@ const DriverSchema = new mongoose.Schema({
   driversLicenseImage: { type: String },
   orcrImage: { type: String },
   selfieImage: { type: String },
+
+  capacity: {
+    type: Number,
+    min: 1,
+    max: 6,
+    default: 4,  
+    required: true,
+  },
 }, { timestamps: true });
 
 DriverSchema.pre("save", async function (next) {

@@ -1,0 +1,26 @@
+{
+    "sourceFile": "app/chat/_layout..tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1757327689177,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1757329838360,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -3,14 +3,14 @@\n \r\n export default function ChatLayout() {\r\n   return (\r\n     <Stack>\r\n-      <Stack.Screen \r\n-        name=\"room\" \r\n-        options={{ \r\n-          title: \"Chat Room\",\r\n-          headerShown: true \r\n-        }} \r\n+      <Stack.Screen\r\n+        name=\"[bookingId]\"\r\n+        options={{\r\n+          title: \"Chat\",\r\n+          headerShown: true,\r\n+        }}\r\n       />\r\n     </Stack>\r\n   );\r\n }\r\n"
+                },
+                {
+                    "date": 1757334182608,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,16 +1,5 @@\n-// app/chat/_layout.tsx\r\n import { Stack } from \"expo-router\";\r\n \r\n export default function ChatLayout() {\r\n-  return (\r\n-    <Stack>\r\n-      <Stack.Screen\r\n-        name=\"[bookingId]\"\r\n-        options={{\r\n-          title: \"Chat\",\r\n-          headerShown: true,\r\n-        }}\r\n-      />\r\n-    </Stack>\r\n-  );\r\n+  return <Stack screenOptions={{ headerShown: false }} />;\r\n }\r\n"
+                }
+            ],
+            "date": 1757327689177,
+            "name": "Commit-0",
+            "content": "// app/chat/_layout.tsx\r\nimport { Stack } from \"expo-router\";\r\n\r\nexport default function ChatLayout() {\r\n  return (\r\n    <Stack>\r\n      <Stack.Screen \r\n        name=\"room\" \r\n        options={{ \r\n          title: \"Chat Room\",\r\n          headerShown: true \r\n        }} \r\n      />\r\n    </Stack>\r\n  );\r\n}\r\n"
+        }
+    ]
+}
