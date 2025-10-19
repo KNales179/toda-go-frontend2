@@ -14,6 +14,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { API_BASE_URL } from "../../config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { saveAuth } from "../utils/authStorage";
 
 const { width } = Dimensions.get("window");
 
@@ -26,7 +27,6 @@ export default function DLogin() {
   const loginDriver = async () => {
     Keyboard.dismiss();
     try {
-      console.log("API_BASE_URL is", API_BASE_URL);
       const response = await fetch(`${API_BASE_URL}/api/login/driver/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -34,27 +34,45 @@ export default function DLogin() {
       });
 
       const text = await response.text();
-      let data;
+      let data: any;
       try {
         data = JSON.parse(text);
-      } catch (e) {
+      } catch {
         console.error("Server did not return JSON:", text);
         throw new Error("Invalid server response: not JSON");
       }
 
-      if (response.ok && data.driver && data.driver._id) {
-        await AsyncStorage.setItem("driverId", data.driver._id);
-        Alert.alert("Login Successful", "Welcome!");
-        router.push("../homedriver/dhome");
-      } else {
-        Alert.alert("Login Failed", data.error || "Invalid credentials");
+      if (!response.ok) {
+        throw new Error(data?.error || "Invalid credentials");
       }
 
+      // be flexible with backend shapes
+      const driverId =
+        data?.driver?._id ||
+        data?.user?._id ||
+        data?.driverId ||
+        data?._id;
+
+      if (!driverId) {
+        throw new Error("Login succeeded but no driverId returned");
+      }
+
+      // unified saved auth
+      await saveAuth({
+        role: "driver",
+        userId: String(driverId),
+        token: data?.token,
+      });
+      await AsyncStorage.setItem("driverId", String(driverId));
+
+      Alert.alert("Login Successful", "Welcome!");
+      router.replace("../homedriver/dhome");
     } catch (error: any) {
-      console.error("Login error (catch block):", error);
-      Alert.alert("Login Failed", error.message || "Network/server error");
+      console.error("Login error (driver):", error);
+      Alert.alert("Login Failed", error?.message || "Network/server error");
     }
   };
+
 
   return (
     <View style={styles.container}>

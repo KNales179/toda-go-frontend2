@@ -128,6 +128,15 @@ export default function ChatRoom() {
     }
   };
 
+  // Poll every 2s
+  useEffect(() => {
+    fetchMessages();
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(fetchMessages, 2000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [driverId, passengerId, bookingId]);
 
 
   const renderItem = ({ item }: { item: Msg }) => (
@@ -148,9 +157,14 @@ export default function ChatRoom() {
   );
 
   const handleBack = () => {
-    // Adjust to your real list routes
-    router.replace(role === "driver" ? "/homedriver/dchats" : "/homepassenger/pchats");
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      // fallback if user opened chat from notification or deep link
+      router.replace(role === "driver" ? "/homedriver/dchats" : "/homepassenger/pchats");
+    }
   };
+
 
   return (
     <SafeAreaView

@@ -1,17 +1,17 @@
-// routes/Booking.js (queue model: pending → accept)
-const express = require('express');
+// routes/Booking.js (Mongo-only)
+const express = require("express");
 const router = express.Router();
+
+const mongoose = require("mongoose");
 const DriverStatus = require("../models/DriverStatus");
 const Passenger = require("../models/Passenger");
 const RideHistory = require("../models/RideHistory");
+const Booking = require("../models/Bookings");
 
-// In-memory store (unchanged for now)
-let bookings = [];
-
-// --- Haversine helpers ---
+// ---------- helpers ----------
 const toRad = (v) => (v * Math.PI) / 180;
-const EARTH_R_M = 6371000;
 const haversineMeters = (a, b) => {
+  const EARTH_R_M = 6371000;
   const dLat = toRad(b.lat - a.lat);
   const dLng = toRad(b.lng - a.lng);
   const la1 = toRad(a.lat);
@@ -21,41 +21,234 @@ const haversineMeters = (a, b) => {
     Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
   return 2 * EARTH_R_M * Math.asin(Math.sqrt(s));
 };
+const isObjectId = (s) => mongoose.Types.ObjectId.isValid(String(s || ""));
 
-// --- BOOK: create pending only (no auto-assign) ---
-router.post('/book', async (req, res) => {
+// Config
+const RESERVATION_SECONDS = null;
+
+// --- Capacity utils ---
+async function getDriverStatusOrInit(driverId) {
+  let ds = await DriverStatus.findOne({ driverId }).lean();
+  if (!ds) {
+    // Initialize with safe defaults
+    ds = (await DriverStatus.create({
+      driverId,
+      isOnline: false,
+      capacityTotal: 4,
+      capacityUsed: 0,
+      lockedSolo: false,
+      activeBookingIds: [],
+    })).toObject();
+  } else if (typeof ds.capacityTotal !== "number") {
+    // Backfill old docs
+    await DriverStatus.updateOne(
+      { driverId },
+      { $set: { capacityTotal: 4, capacityUsed: ds.capacityUsed || 0, lockedSolo: !!ds.lockedSolo } }
+    );
+    ds.capacityTotal = 4;
+    ds.capacityUsed = ds.capacityUsed || 0;
+    ds.lockedSolo = !!ds.lockedSolo;
+  }
+  return ds;
+}
+
+function fitsCapacity(booking, ds) {
+  const seats = Number(booking?.reservedSeats || booking?.partySize || 1);
+  const total = Number(ds.capacityTotal || 4);
+  const used = Number(ds.capacityUsed || 0);
+  const remaining = total - used;
+
+  if (booking.bookingType === "SOLO") {
+    // SOLO only if empty and not locked
+    return !ds.lockedSolo && used === 0;
+  }
+  // CLASSIC/GROUP
+  return !ds.lockedSolo && remaining >= seats;
+}
+
+async function reserveSeatsAtomic({ driverId, booking }) {
+  const seats = Number(booking?.reservedSeats || booking?.partySize || 1);
+
+  // First try to increment DriverStatus if capacity allows
+  const match = {
+    driverId: new mongoose.Types.ObjectId(driverId),
+    isOnline: true,
+    // For SOLO: must be empty and not locked
+    ...(booking.bookingType === "SOLO"
+      ? { capacityUsed: { $eq: 0 }, lockedSolo: false }
+      : { lockedSolo: false, $expr: { $lte: ["$capacityUsed", { $subtract: ["$capacityTotal", seats] }] } }),
+  };
+
+  const update = {
+    $inc: { capacityUsed: seats },
+    $set: { updatedAt: new Date() },
+    ...(booking.bookingType === "SOLO" ? { $setOnInsert: {}, $set: { lockedSolo: true } } : {}),
+    ...(booking.bookingId ? { $addToSet: { activeBookingIds: String(booking.bookingId) } } : {}),
+  };
+
+  const ds = await DriverStatus.findOneAndUpdate(match, update, { new: true }).lean();
+
+  if (!ds) {
+    // capacity/lock condition failed
+    return { ok: false, reason: "capacity_or_lock" };
+  }
+
+  // Now atomically claim booking if still pending
+  const claimed = await Booking.findOneAndUpdate(
+    { bookingId: booking.bookingId, status: "pending" },
+    {
+      $set: {
+        status: "accepted",
+        driverId: String(driverId),
+        driverLock: booking.bookingType === "SOLO",
+      },
+    },
+    { new: true }
+  ).lean();
+
+  if (!claimed) {
+    // Rollback driver seat increment
+    const rb = {
+      $inc: { capacityUsed: -seats },
+      $pull: { activeBookingIds: String(booking.bookingId) },
+      $set: { updatedAt: new Date() },
+    };
+    if (booking.bookingType === "SOLO") rb.$set.lockedSolo = false;
+    await DriverStatus.updateOne({ driverId }, rb);
+    return { ok: false, reason: "booking_already_taken" };
+  }
+
+  return { ok: true, booking: claimed, driverStatus: ds };
+}
+
+async function releaseSeats({ driverId, booking, reason = "release" }) {
+  if (!driverId || !booking) return;
+
+  const seats = Number(booking?.reservedSeats || booking?.partySize || 1);
+  const rb = {
+    $inc: { capacityUsed: -seats },
+    $pull: { activeBookingIds: String(booking.bookingId) },
+    $set: { updatedAt: new Date() },
+  };
+  if (booking.bookingType === "SOLO") rb.$set.lockedSolo = false;
+
+  try {
+    await DriverStatus.updateOne({ driverId: new mongoose.Types.ObjectId(driverId) }, rb);
+  } catch (e) {
+    console.error(`⚠️ Seat release failed (${reason}):`, e?.message || e);
+  }
+}
+
+async function cleanupExpiredReservations(targetDriverId = null) {
+  // 🚫 Skip reservation cleanup entirely if disabled
+  if (!RESERVATION_SECONDS) return;
+
+  const now = new Date();
+  const match = {
+    status: "accepted",
+    reservationExpiresAt: { $ne: null, $lt: now },
+  };
+
+  const expired = await Booking.find(match).lean();
+  for (const b of expired) {
+    const updated = await Booking.findOneAndUpdate(
+      { bookingId: b.bookingId, status: "accepted" },
+      {
+        $set: {
+          status: "pending",
+          driverId: null,
+          reservationExpiresAt: null,
+          driverLock: false,
+        },
+      },
+      { new: true }
+    ).lean();
+
+    if (updated && b.driverId) {
+      if (!targetDriverId || String(targetDriverId) === String(b.driverId)) {
+        await releaseSeats({ driverId: b.driverId, booking: b, reason: "expire" });
+      }
+    }
+  }
+}
+
+
+// ---------- POST /book ----------
+router.post("/book", async (req, res) => {
   try {
     const {
-      pickupLat, pickupLng,
-      destinationLat, destinationLng,
-      fare, paymentMethod, notes, passengerId,
+      pickupLat,
+      pickupLng,
+      destinationLat,
+      destinationLng,
+      fare,
+      paymentMethod,
+      notes,
+      passengerId,
+
+      // ▶️ NEW from client
+      bookingType = "CLASSIC",
+      partySize,
     } = req.body;
 
-    // Fetch nice-to-have passenger name
-    let passengerName = "Anonymous";
+    if (
+      ![pickupLat, pickupLng, destinationLat, destinationLng].every((n) =>
+        Number.isFinite(Number(n))
+      )
+    ) {
+      return res.status(400).json({ message: "Invalid coordinates" });
+    }
+    if (!passengerId) {
+      return res.status(400).json({ message: "passengerId required" });
+    }
+
+    // Validate booking type + partySize
+    const type = ["CLASSIC", "GROUP", "SOLO"].includes(String(bookingType).toUpperCase())
+      ? String(bookingType).toUpperCase()
+      : "CLASSIC";
+
+    let size = Number(partySize);
+    if (type === "SOLO") size = 1;
+    else if (!Number.isFinite(size) || size < 1) size = 1;
+    else if (type === "GROUP" && size > 5) size = 5;
+
+    const isShareable = type !== "SOLO";
+    const reservedSeats = size;
+
+    // Nice-to-have display name
+    let passengerName = "Passenger";
     try {
       const p = await Passenger.findById(passengerId).select("firstName middleName lastName");
-      if (p) passengerName = [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ");
+      if (p) {
+        passengerName = [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ");
+      }
     } catch {}
 
-    const bookingId = bookings.length + 1;
-    const bookingData = {
-      id: bookingId,
-      pickupLat, pickupLng,
-      destinationLat, destinationLng,
-      fare, paymentMethod, notes,
-      passengerName,
-      passengerId: passengerId || null,
-      driverId: null,
-      status: "pending",
-      createdAt: new Date(),
-      chat: [], // 💬 store chat messages here
-    };
-    bookings.push(bookingData);
+    const booking = await Booking.create({
+      passengerId,
+      pickupLat,
+      pickupLng,
+      destinationLat,
+      destinationLng,
+      fare,
+      paymentMethod,
+      notes,
 
+      // NEW
+      bookingType: type,
+      partySize: size,
+      isShareable,
+      reservedSeats,
+      driverLock: false,
+
+      status: "pending",
+      passengerName,
+    });
+
+    const plain = booking.toObject();
     return res.status(200).json({
       message: "Booking created. Waiting for a driver to accept.",
-      booking: bookingData
+      booking: { ...plain, id: plain.bookingId },
     });
   } catch (error) {
     console.error("❌ Error during booking:", error);
@@ -63,52 +256,60 @@ router.post('/book', async (req, res) => {
   }
 });
 
-
-async function isDriverEffectivelyOnline(driverId) {
-  if (!driverId) return false;
-  const status = await DriverStatus.findOne({ driverId });
-  if (!status) return false;
-  const last = new Date(status.updatedAt).getTime();
-  return Boolean(status.isOnline) && (Date.now() - last < 60_000);
-}
-
-
-// --- DRIVER QUEUE: nearby pending bookings ---
-router.get('/waiting-bookings', async (req, res) => {
+// ---------- GET /waiting-bookings ----------
+router.get("/waiting-bookings", async (req, res) => {
   try {
     const lat = Number(req.query.lat);
     const lng = Number(req.query.lng);
     const radiusKm = Math.max(0, Number(req.query.radiusKm ?? 5));
     const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 20)));
-    const driverId = req.query.driverId; // optional
+    const driverId = req.query.driverId;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ message: "lat/lng required" });
     }
 
-    // If driverId provided, require that driver is effectively online
+    await cleanupExpiredReservations(driverId || null);
+
+    let ds = null;
     if (driverId) {
-      const ok = await isDriverEffectivelyOnline(driverId);
-      if (!ok) return res.status(403).json({ message: "Driver is offline" });
+      ds = await DriverStatus.findOne({ driverId }).lean();
+      if (!ds || !ds.isOnline) {
+        return res.status(403).json({ message: "Driver is offline" });
+      }
     }
 
     const center = { lat, lng };
-    const out = bookings
-      .filter(b => b && b.status === "pending")
-      .map(b => {
-        const distM = haversineMeters(center, { lat: b.pickupLat, lng: b.pickupLng });
+
+    // IMPORTANT: only pending
+    const pending = await Booking.find({ status: "pending" }).lean();
+
+    const filtered = (pending || []).filter((b) => {
+      if (!driverId || !ds) return true;
+      return fitsCapacity(b, ds);
+    });
+
+    const out = filtered
+      .map((b) => {
+        const distM = haversineMeters(center, {
+          lat: Number(b.pickupLat),
+          lng: Number(b.pickupLng),
+        });
         return {
-          id: b.id,
+          id: b.bookingId,
           pickup: { lat: b.pickupLat, lng: b.pickupLng },
           destination: { lat: b.destinationLat, lng: b.destinationLng },
           fare: b.fare,
-          passengerPreview: { name: b.passengerName },
+          passengerPreview: { name: b.passengerName || "Passenger" },
           distanceKm: distM / 1000,
           createdAt: b.createdAt,
+          bookingType: b.bookingType,
+          partySize: b.partySize,
+          isShareable: b.isShareable,
         };
       })
-      .filter(r => r.distanceKm <= radiusKm)
-      .sort((a, b) => a.distanceKm - b.distanceKm || a.id - b.id)
+      .filter((r) => r.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
       .slice(0, limit);
 
     return res.status(200).json(out);
@@ -119,128 +320,218 @@ router.get('/waiting-bookings', async (req, res) => {
 });
 
 
-// --- ACCEPT: require driverId + guard pending ---
-router.post('/accept-booking', async (req, res) => {
+// ---------- POST /accept-booking ----------
+router.post("/accept-booking", async (req, res) => {
   try {
     const { bookingId, driverId } = req.body;
-    const id = Number(bookingId);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid bookingId" });
-    if (!driverId) return res.status(400).json({ message: "driverId required" });
-
-    // Guard: driver must be effectively online (isOnline && heartbeat < 60s)
-    const ok = await isDriverEffectivelyOnline(driverId);
-    if (!ok) {
-      return res.status(409).json({ message: "Cannot accept: driver is offline (no recent heartbeat)" });
+    if (!bookingId || !driverId) {
+      return res.status(400).json({ message: "bookingId and driverId are required" });
     }
 
-    const booking = bookings.find(b => b.id === id);
-    if (!booking) return res.status(404).json({ message: "Booking not found" });
-
-    if (booking.status !== "pending") {
-      return res.status(409).json({ message: `Cannot accept. Current status: ${booking.status}` });
+    // Load booking (must be pending)
+    const b = await Booking.findOne({ bookingId, status: "pending" }).lean();
+    if (!b) {
+      return res.status(409).json({ message: "Booking not found or already accepted" });
     }
 
-    booking.driverId = String(driverId);
-    booking.status = "accepted";
+    // Ensure DriverStatus exists & online
+    const ds = await getDriverStatusOrInit(driverId);
+    if (!ds || !ds.isOnline) {
+      return res.status(403).json({ message: "Driver is offline" });
+    }
 
-    return res.status(200).json({ message: "Booking accepted", booking });
+    // Capacity/lock guard and atomic claim+reserve
+    const result = await reserveSeatsAtomic({ driverId, booking: b });
+    if (!result.ok) {
+      const msg =
+        result.reason === "capacity_or_lock"
+          ? "Driver cannot accept (capacity/lock)"
+          : "Booking already accepted by another driver";
+      return res.status(409).json({ message: msg });
+    }
+
+    return res.status(200).json({
+      message: "Booking accepted",
+      booking: result.booking,
+    });
   } catch (e) {
     console.error("❌ accept-booking error:", e);
     return res.status(500).json({ message: "Server error" });
   }
 });
 
+// ---------- GET /driver-requests/:driverId ----------
+router.get("/driver-requests/:driverId", async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    if (!driverId) {
+      return res.status(400).json({ error: "driverId is required" });
+    }
 
-// --- CHAT ENDPOINTS ---
-// Fetch messages for a booking
-router.get('/bookings/:id/chat', (req, res) => {
-  const id = Number(req.params.id);
-  const booking = bookings.find(b => b.id === id);
-  if (!booking) return res.status(404).json({ message: "Booking not found" });
-  return res.status(200).json(booking.chat);
-});
+    // Lazy cleanup for this driver
+    await cleanupExpiredReservations(driverId);
 
-// Post a new message to chat
-router.post('/bookings/:id/chat', (req, res) => {
-  const id = Number(req.params.id);
-  const { sender, text } = req.body;
-  const booking = bookings.find(b => b.id === id);
-  if (!booking) return res.status(404).json({ message: "Booking not found" });
-  if (!sender || !text) return res.status(400).json({ message: "sender and text required" });
+    const match =
+      isObjectId(driverId)
+        ? { driverId: new mongoose.Types.ObjectId(driverId) }
+        : { driverId: driverId };
 
-  const msg = { sender, text, ts: new Date() };
-  booking.chat.push(msg);
-  return res.status(200).json({ message: "Message added", chat: booking.chat });
-});
+    const rows = await Booking.find({
+      ...match,
+      status: { $in: ["pending", "accepted"] },
+    }).lean();
 
+    const sanitized = (rows || []).map((b) => ({
+      id: String(b.bookingId || ""),
+      status: b.status ?? "pending",
+      driverId: b.driverId ? String(b.driverId) : "",
+      passengerId: b.passengerId ? String(b.passengerId) : "",
+      pickupLat: Number(b.pickupLat) || 0,
+      pickupLng: Number(b.pickupLng) || 0,
+      destinationLat: Number(b.destinationLat) || 0,
+      destinationLng: Number(b.destinationLng) || 0,
+      fare: Number(b.fare) || 0,
+      paymentMethod: b.paymentMethod || "",
+      notes: b.notes || "",
+      passengerName: b.passengerName || "Passenger",
+      createdAt: b.createdAt || new Date(),
+      // NEW:
+      bookingType: b.bookingType,
+      partySize: b.partySize,
+      isShareable: b.isShareable,
+      reservationExpiresAt: b.reservationExpiresAt || null,
+    }));
 
-// --- Existing helpers/endpoints (kept) ---
-router.get('/bookings', (req, res) => res.status(200).json(bookings));
-
-router.get('/driver-requests/:driverId', (req, res) => {
-  const { driverId } = req.params;
-  const driverBookings = bookings.filter(
-    (b) => String(b.driverId) === String(driverId) &&
-           (b.status === "pending" || b.status === "accepted")
-  );
-  res.status(200).json(driverBookings);
-});
-
-router.post('/driver-confirmed', (req, res) => {
-  const { bookingId } = req.body;
-  const booking = bookings.find(b => b.id === bookingId);
-  if (!booking) return res.status(404).json({ message: "Booking not found" });
-
-  booking.driverConfirmed = true;
-  return res.status(200).json({ message: "Passenger notified!", booking });
-});
-
-router.post('/cancel-booking', (req, res) => {
-  const { bookingId } = req.body;
-  const booking = bookings.find(b => b.id === bookingId);
-  if (!booking) return res.status(404).json({ message: "Booking not found" });
-  booking.status = "cancelled";
-  booking.cancelledBy = "passenger";
-  console.log("❌ Booking cancelled by passenger:", bookingId);
-  res.status(200).json({ message: "Booking cancelled" });
-});
-
-router.post('/clear-bookings', (req, res) => {
-  bookings = [];
-  console.log("🧹 All bookings cleared.");
-  res.status(200).json({ message: "All bookings cleared." });
-});
-
-router.post('/complete-booking', (req, res) => {
-  const { bookingId, id: idAlt } = req.body;
-  const id = Number(bookingId ?? idAlt);
-  if (!Number.isFinite(id)) {
-    return res.status(400).json({ message: "Invalid bookingId" });
+    return res.status(200).json(sanitized);
+  } catch (err) {
+    console.error("❌ /driver-requests error:", err);
+    return res
+      .status(500)
+      .json({ error: "Internal Server Error", message: err?.message || String(err) });
   }
-  const booking = bookings.find(b => b.id === id);
-  if (!booking) return res.status(404).json({ message: "Booking not found" });
+});
 
-  booking.status = "completed";
+// ---------- POST /driver-confirmed (optional legacy) ----------
+router.post("/driver-confirmed", async (req, res) => {
+  try {
+    const { bookingId } = req.body;
+    if (!bookingId) return res.status(400).json({ message: "bookingId required" });
 
-  const rideHistory = new RideHistory({
-    bookingId: booking.id,
-    passengerId: booking.passengerId,
-    driverId: booking.driverId,
-    pickupLat: booking.pickupLat,
-    pickupLng: booking.pickupLng,
-    destinationLat: booking.destinationLat,
-    destinationLng: booking.destinationLng,
-    fare: booking.fare,
-    paymentMethod: booking.paymentMethod,
-    notes: booking.notes,
-  });
+    const b = await Booking.findOneAndUpdate(
+      { bookingId },
+      { $set: { driverConfirmed: true } },
+      { new: true }
+    ).lean();
 
-  rideHistory.save()
-    .then(() => res.status(200).json({ message: "Booking marked as completed and history saved!" }))
-    .catch((err) => {
-      console.error("❌ Error saving ride history:", err);
-      res.status(500).json({ message: "Server error while saving ride history" });
+    if (!b) return res.status(404).json({ message: "Booking not found" });
+    return res.status(200).json({ message: "Passenger notified!", booking: b });
+  } catch (e) {
+    console.error("❌ driver-confirmed error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ---------- POST /cancel-booking ----------
+router.post("/cancel-booking", async (req, res) => {
+  try {
+    const { bookingId } = req.body;
+    if (!bookingId) {
+      return res.status(400).json({ message: "bookingId required" });
+    };
+
+    const b = await Booking.findOne({ bookingId }).lean();
+    if (!b) return res.status(404).json({ message: "Booking not found" });
+
+    // If it was accepted and has a driver, release seats
+    if (b.status === "accepted" && b.driverId) {
+      await releaseSeats({ driverId: b.driverId, booking: b, reason: "cancel" });
+    }
+
+    const updated = await Booking.findOneAndUpdate(
+      { bookingId },
+      {
+        $set: {
+          status: "canceled",
+          cancelledBy: "passenger",
+          driverId: null,
+          reservationExpiresAt: null,
+          driverLock: false,
+        },
+      },
+      { new: true }
+    ).lean();
+
+    return res.status(200).json({ message: "Booking cancelled", booking: updated });
+  } catch (e) {
+    console.error("❌ cancel-booking error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ---------- POST /complete-booking ----------
+router.post("/complete-booking", async (req, res) => {
+  try {
+    const { bookingId } = req.body;
+    if (!bookingId) {
+      return res.status(400).json({ message: "bookingId required" });
+    }
+
+    const b = await Booking.findOne({ bookingId }).lean();
+    if (!b) return res.status(404).json({ message: "Booking not found" });
+
+    // If accepted/enroute and has a driver, release seats
+    if ((b.status === "accepted" || b.status === "enroute") && b.driverId) {
+      await releaseSeats({ driverId: b.driverId, booking: b, reason: "complete" });
+    }
+
+    const updated = await Booking.findOneAndUpdate(
+      { bookingId },
+      { $set: { status: "completed", reservationExpiresAt: null, driverLock: false } },
+      { new: true }
+    );
+
+    // Save to ride history (best-effort)
+    try {
+      await RideHistory.create({
+        bookingId: updated.bookingId,
+        passengerId: updated.passengerId,
+        driverId: updated.driverId,
+        pickupLat: updated.pickupLat,
+        pickupLng: updated.pickupLng,
+        destinationLat: updated.destinationLat,
+        destinationLng: updated.destinationLng,
+        fare: updated.fare,
+        paymentMethod: updated.paymentMethod,
+        notes: updated.notes,
+      });
+    } catch (e) {
+      console.error("❌ Error saving ride history:", e);
+    }
+
+    return res.status(200).json({
+      message: "Booking marked as completed and history saved!",
+      booking: { ...updated.toObject?.() ?? updated, id: updated.bookingId },
     });
+  } catch (e) {
+    console.error("❌ complete-booking error:", e);
+    return res.status(500).json({ message: "Server error", details: e.message });
+  }
+});
+
+// ---------- (Optional) GET /bookings — debug only ----------
+router.get("/bookings", async (_req, res) => {
+  try {
+    const rows = await Booking.find({}).sort({ createdAt: -1 }).lean();
+    return res.status(200).json(
+      rows.map((b) => ({
+        ...b,
+        id: b.bookingId,
+      }))
+    );
+  } catch (e) {
+    console.error("❌ list bookings error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
 });
 
 module.exports = router;

@@ -14,6 +14,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {API_BASE_URL} from "../../config";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { saveAuth } from "../utils/authStorage";
 
 const { width } = Dimensions.get("window");
 
@@ -26,39 +27,56 @@ export default function PLogin() {
   const loginUser = async () => {
     Keyboard.dismiss();
     try {
-      console.log("API_BASE_URL is", API_BASE_URL);
+
       const response = await fetch(`${API_BASE_URL}/api/login/passenger/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password: pass }),
       });
-  
-      const text = await response.text();  // 🔥 Read it as plain text first
-  
-      console.log("Raw server response:", text);  // 🔥 Debug print to see what server replied
-  
-      let data;
+
+      const text = await response.text();
+      console.log("Raw server response:", text);
+
+      let data: any;
       try {
-        data = JSON.parse(text);  // 🔥 Then try to parse it safely
-      } catch (jsonError) {
+        data = JSON.parse(text);
+      } catch {
         console.error("Server did not return JSON:", text);
         throw new Error("Invalid server response: not JSON");
       }
-  
-      if (response.ok) {
-        await AsyncStorage.setItem("passengerId", data.userId);
-        Alert.alert("Login Successful", "Welcome!");
-        router.push("../homepassenger/phome");
-      } else {
-        Alert.alert("Login Failed", data.error || "Invalid credentials");
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Invalid credentials");
       }
-  
+
+      // accept multiple shapes
+      const passengerId =
+        data?.userId ||
+        data?.passenger?._id ||
+        data?.user?._id ||
+        data?._id;
+
+      if (!passengerId) {
+        throw new Error("Login succeeded but no passengerId returned");
+      }
+
+      // unified saved auth
+      await saveAuth({
+        role: "passenger",
+        userId: String(passengerId),
+        token: data?.token,
+      });
+      await AsyncStorage.setItem("passengerId", String(passengerId));
+
+
+      Alert.alert("Login Successful", "Welcome!");
+      router.replace("../homepassenger/phome");
     } catch (error: any) {
-      console.error("Login error (catch block):", error);
-      const errorMessage = error?.message || "An error occurred during login";
-      Alert.alert("Login Failed", errorMessage);
+      console.error("Login error (passenger):", error);
+      Alert.alert("Login Failed", error?.message || "Network/server error");
     }
-  };  
+  };
+
 
   return (
     <View style={styles.container}>

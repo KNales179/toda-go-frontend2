@@ -9,6 +9,7 @@ import { API_BASE_URL } from "../../config";
 import { useFocusEffect } from "@react-navigation/native";
 import { MaterialIcons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { clearAuth } from "../utils/authStorage";
 
 
 const { width } = Dimensions.get("window");
@@ -366,6 +367,7 @@ export default function PProfile() {
   const handleLogout = async () => {
     try {
       await AsyncStorage.removeItem("passengerId");
+      await clearAuth();
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("../login_and_reg/plogin");
     } catch (error) {

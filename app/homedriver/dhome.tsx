@@ -21,6 +21,58 @@ import { router } from "expo-router";
 import * as Location from 'expo-location';
 import type { AppStateStatus } from "react-native";
 import ChatNotice from "../../components/ChatNotice";
+import { getAuth } from "../utils/authStorage";
+
+const safeJson = async (res: Response, label: string) => {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.error(`${label} → non-JSON`, {
+      status: res.status,
+      url: res.url,
+      body: text.slice(0, 400),
+    });
+    throw new Error(`${label} returned non-JSON (status ${res.status})`);
+  }
+};
+
+
+// ---- Address label helpers (cache + reverse geocode) ----
+const addrCacheRef = { current: new Map<string, string>() };
+
+function coordsKey(lat: number, lng: number) {
+  return `${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+// Builds a short readable label from Expo reverse geocode result
+function buildLabel(addr: Location.LocationGeocodedAddress | null) {
+  if (!addr) return "Selected location";
+  const p = [];
+  if (addr.name) p.push(addr.name);
+  if (addr.street && !p.includes(addr.street)) p.push(addr.street);
+  const city = addr.city || addr.subregion || addr.district || addr.region;
+  if (city) p.push(city);
+  return p.filter(Boolean).join(", ") || "Selected location";
+}
+
+async function getPlaceLabel(lat: number, lng: number) {
+  const key = coordsKey(lat, lng);
+  const cached = addrCacheRef.current.get(key);
+  if (cached) return cached;
+
+  try {
+    const res = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+    const label = buildLabel(res?.[0] ?? null);
+    addrCacheRef.current.set(key, label);
+    return label;
+  } catch {
+    const fallback = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    addrCacheRef.current.set(key, fallback);
+    return fallback;
+  }
+}
+
 
 type LatLng = { lat: number; lng: number };
 type Phase = "idle" | "toPickup" | "toDropoff";
@@ -32,6 +84,7 @@ export default function DHome() {
   const [isOnline, setIsOnline] = useState(false);
   const [mapHtml, setMapHtml] = useState("");
   const mapRef = useRef<WebViewType | null>(null);
+  const [driverId, setDriverId] = useState<string | null>(null);
 
   const [incomingBooking, setIncomingBooking] = useState<any>(null); // focused accepted job
   const [confirmed, setConfirmed] = useState(false);
@@ -43,7 +96,17 @@ export default function DHome() {
   const [queue, setQueue] = useState<any[]>([]);
   const [capacity, setCapacity] = useState<number | null>(null);
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
-  const [previewBooking, setPreviewBooking] = useState<any | null>(null); // tapped PoPas preview
+  const [previewBooking, setPreviewBooking] = useState<any | null>(null);
+  const [driverLoc, setDriverLoc] = useState<LatLng | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const heartbeatTimerRef = useRef<number | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const bookingIdRef = useRef<string | null>(null);
+
+  const usedSeats = activeJobs.reduce((sum, job) => sum + (job.partySize || 1), 0);
+  const totalSeats = capacity
+  const isFull = totalSeats != null && usedSeats >= totalSeats;
+
 
   const [currentBooking, setCurrentBooking] = useState<any>(null);
   const status = currentBooking?.status as
@@ -54,24 +117,26 @@ export default function DHome() {
     | undefined;
 
   const passengerId = currentBooking?.passengerId;
-  const [driverId, setDriverId] = useState<string | null>(null);
+  // ✅ Fetch unified/legacy driverId once
   useEffect(() => {
-    AsyncStorage.getItem("driverId")
-      .then((v) => setDriverId(v))
-      .catch(() => setDriverId(null));
+    const fetchDriver = async () => {
+      const auth = await getAuth();
+      const legacyId = await AsyncStorage.getItem("driverId");
+      const resolved = (auth?.role === "driver" ? auth.userId : null) || legacyId;
+
+      if (!resolved) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/dlogin");
+        return;
+      }
+      setDriverId(String(resolved)); // ✅ fix: store in state
+    };
+    fetchDriver();
   }, []);
 
 
   const canShowChatNotice =
     status === 'accepted' && !!currentBooking?._id && !!driverId && !!passengerId;
-
-
-  const [driverLoc, setDriverLoc] = useState<LatLng | null>(null);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const heartbeatTimerRef = useRef<number | null>(null);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-
-  const bookingIdRef = useRef<string | null>(null);
   const dbg = (...args: any[]) => console.log("[DHOME]", ...args);
 
   const validateBooking = (b: any) => {
@@ -184,7 +249,15 @@ export default function DHome() {
               return m + "m";
             }
 
-            const map = L.map('map').setView([${location.latitude}, ${location.longitude}], 15);
+            const map = L.map('map', {
+              zoomControl: true,
+              maxBounds: [[13.96, 121.643], [13.88,121.588]],
+              maxBoundsViscosity: 0.5,
+              minZoom: 13,
+              maxZoom: 16,
+              noWrap: true 
+            }).setView([${location.latitude}, ${location.longitude}], 15)
+              .fitBounds([[13.96, 121.643], [13.88,121.588]]);
 
             L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
               maxZoom: 19,
@@ -368,19 +441,15 @@ export default function DHome() {
     }
   };
 
-  // send driver status (online/offline)
+  // ✅ safer driver-status (may not return JSON)
   const updateDriverStatus = async (newStatus: boolean) => {
-    if (!location) return;
+    if (!location || !driverId) return;
     try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      const driverName = await AsyncStorage.getItem("driverName");
-      if (!driverId) return;
       const response = await fetch(`${API_BASE_URL}/api/driver-status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           driverId,
-          driverName,
           isOnline: newStatus,
           location: {
             latitude: location.latitude,
@@ -388,7 +457,11 @@ export default function DHome() {
           },
         }),
       });
-      await response.json();
+
+      if (!response.ok) {
+        const txt = await response.text();
+        console.error("POST /driver-status failed", response.status, txt.slice(0, 200));
+      }
     } catch (error) {
       console.error("❌ Failed to update driver status:", error);
     }
@@ -435,17 +508,15 @@ export default function DHome() {
   }, [isOnline, driverLoc]); // driverLoc in deps keeps heartbeats sending fresh coords
 
 
-  // poll bookings assigned to this driver (build activeJobs; keep accepted focused)
+    // ✅ Poll driver requests safely
   useEffect(() => {
+    if (!driverId) return;
     let interval: any;
 
     const fetchRequests = async () => {
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId) return;
-
       try {
         const res = await fetch(`${API_BASE_URL}/api/driver-requests/${driverId}`);
-        const raw = await res.json();
+        const raw = await safeJson(res, "GET /api/driver-requests");
         const data: any[] = Array.isArray(raw) ? raw : [];
 
         const acceptedOnly = data.filter(
@@ -455,31 +526,38 @@ export default function DHome() {
 
         const acceptedHead = acceptedOnly[0];
         if (acceptedHead) {
-          setIncomingBooking((prev: any) =>
-            prev?.id === acceptedHead.id ? prev : acceptedHead
-          );
+          setIncomingBooking((prev: any) => (prev?.id === acceptedHead.id ? prev : acceptedHead));
           return;
         }
 
-        // if we thought we had an accepted, but server shows none → cancelled
+        // cleanup if booking cancelled
         const wasAcceptedByMe =
           incomingBooking?.status === "accepted" &&
           String(incomingBooking?.driverId || "") === String(driverId);
 
         if (wasAcceptedByMe) {
-          console.log("❌ Booking was cancelled - cleaning up...");
+          console.log("❌ Booking cancelled — cleanup");
           Alert.alert("Booking Cancelled", "The passenger has cancelled the booking.");
 
+          // 🔥 Clear route + markers immediately
+          mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
           mapRef.current?.postMessage(JSON.stringify({
             type: "setPassengerMarkers",
-            pickup: null, destination: null,
+            pickup: null,
+            destination: null,
           }));
 
+          // ✅ Reset UI state
           setIncomingBooking(null);
           setConfirmed(false);
+          setPickedUp(false);
+          setDropOff(false);
+          setPaymentConfirm(false);
           setPhase("idle");
+          setPreviewBooking(null);
           setActiveJobs(prev => prev.filter(j => String(j.id) !== String(incomingBooking?.id)));
         }
+
       } catch (err) {
         console.error("❌ Failed to fetch booking:", err);
       }
@@ -490,7 +568,7 @@ export default function DHome() {
       interval = setInterval(fetchRequests, 5000);
     }
     return () => clearInterval(interval);
-  }, [isOnline, paymentConfirm, incomingBooking]);
+  }, [isOnline, paymentConfirm, incomingBooking, driverId]);
 
   // reflect accepted→confirmed
   useEffect(() => {
@@ -517,8 +595,15 @@ export default function DHome() {
       if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
       let booking = result.booking;
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
 
-      // hydrate passenger name (optional)
+      // Add readable labels
+      const [pickupLabel, destinationLabel] = await Promise.all([
+        getPlaceLabel(booking.pickupLat, booking.pickupLng),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
+      ]);
+
+      // Hydrate passenger name (best-effort)
       if (booking.passengerId) {
         try {
           const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
@@ -533,7 +618,16 @@ export default function DHome() {
         } catch {}
       }
 
-      // set as active and focus it
+      // Enrich with labels and fallbacks for type
+      booking = {
+        ...booking,
+        pickupLabel,
+        destinationLabel,
+        bookingType: booking.bookingType || "CLASSIC",
+        partySize: booking.partySize || 1,
+      };
+
+      // Set active + focus
       setActiveJobs(prev => (prev.some(j => String(j.id) === String(booking.id)) ? prev : [...prev, booking]));
       setIncomingBooking(booking);
       bookingIdRef.current = String(booking.id);
@@ -555,6 +649,7 @@ export default function DHome() {
     }
   };
 
+
   // accept from the old “incoming” card (kept for safety if you still call setIncomingBooking for pending)
   const acceptBooking = async () => {
     try {
@@ -572,6 +667,12 @@ export default function DHome() {
       if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
       let booking = result.booking;
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
+
+      const [pickupLabel, destinationLabel] = await Promise.all([
+        getPlaceLabel(booking.pickupLat, booking.pickupLng),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
+      ]);
 
       if (booking.passengerId) {
         try {
@@ -586,6 +687,14 @@ export default function DHome() {
           }
         } catch {}
       }
+
+      booking = {
+        ...booking,
+        pickupLabel,
+        destinationLabel,
+        bookingType: booking.bookingType || "CLASSIC",
+        partySize: booking.partySize || 1,
+      };
 
       setIncomingBooking(booking);
       bookingIdRef.current = String(booking.id);
@@ -606,6 +715,7 @@ export default function DHome() {
       Alert.alert("Error", error.message ?? "Failed to accept booking.");
     }
   };
+
 
   // Android back = logout prompt
   useFocusEffect(
@@ -649,53 +759,82 @@ export default function DHome() {
     let timer: any;
 
     const fetchQueue = async () => {
-    try {
-      if (!isOnline) {
+      try {
+        if (!isOnline) {
+          setQueue([]);
+          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          return;
+        }
+
+        const isFull = capacity !== null && activeJobs.length >= capacity;
+        if (isFull) {
+          setQueue([]);
+          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          return;
+        }
+
+        const center = driverLoc
+          ? { lat: driverLoc.lat, lng: driverLoc.lng }
+          : (location ? { lat: location.latitude, lng: location.longitude } : null);
+        if (!center) return;
+
+        const driverId = await AsyncStorage.getItem("driverId");
+        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${driverId ? `&driverId=${driverId}` : ""}`;
+
+        const r = await fetch(url);
+        const text = await r.text();
+        let data: any = [];
+        try { data = JSON.parse(text); } catch {}
+
+        if (!r.ok || !Array.isArray(data)) {
+          // 🔥 Clear markers on ANY error/403 so stale markers disappear
+          setQueue([]);
+          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          return;
+        }
+
+        const list = data;
+        setQueue(list);
+
+        if (previewBooking && !list.some((q: any) => String(q.id) === String(previewBooking.id))) {
+          console.log("[DHOME] preview vanished from queue; closing card", previewBooking.id);
+          setPreviewBooking(null);
+        }
+
+        mapRef.current?.postMessage(JSON.stringify({
+          type: 'setWaitingMarkers',
+          items: list.map((q: any) => ({
+            id: q.id,
+            lat: q.pickup.lat,
+            lng: q.pickup.lng,
+          })),
+        }));
+      } catch (e) {
+        console.log("❌ [DHOME] queue fetch error", e);
+        // 🔥 also clear on thrown error
         setQueue([]);
+        setPreviewBooking(null);
         mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
-        return;
       }
+    };
 
-      const isFull = capacity !== null && activeJobs.length >= capacity;
-      if (isFull) {
-        setQueue([]);
-        mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
-        return;
-      }
-
-      const center = driverLoc
-        ? { lat: driverLoc.lat, lng: driverLoc.lng }
-        : (location ? { lat: location.latitude, lng: location.longitude } : null);
-      if (!center) return;
-
-      // 🔥 Inserted here
-      const driverId = await AsyncStorage.getItem("driverId");
-      const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${driverId ? `&driverId=${driverId}` : ""}`;
-
-      const r = await fetch(url);
-      const data = await r.json();
-      const list = Array.isArray(data) ? data : [];
-
-      setQueue(list);
-
-      mapRef.current?.postMessage(JSON.stringify({
-        type: 'setWaitingMarkers',
-        items: list.map((q: any) => ({
-          id: q.id,
-          lat: q.pickup.lat,
-          lng: q.pickup.lng,
-        })),
-      }));
-    } catch (e) {
-      console.log("❌ queue fetch error", e);
-    }
-  };
 
 
     fetchQueue();
     timer = setInterval(fetchQueue, 3000);
     return () => clearInterval(timer);
   }, [isOnline, driverLoc, location, capacity, activeJobs]);
+
+  useEffect(() => {
+    const isFull = capacity !== null && activeJobs.length >= capacity;
+    if (isFull || incomingBooking) {
+      if (previewBooking) {
+        console.log("[DHOME] capacity full or active job → closing preview", previewBooking.id);
+        setPreviewBooking(null);
+      }
+    }
+  }, [capacity, activeJobs, incomingBooking]);
+
 
   // when going offline or becoming full → clear PoPas markers
   useEffect(() => {
@@ -730,21 +869,30 @@ export default function DHome() {
                 }
                 const q = queue.find(x => String(x.id) === String(msg.bookingId));
                 if (q) {
-                  setPreviewBooking({
-                    id: q.id,
-                    pickupLat: q.pickup.lat,
-                    pickupLng: q.pickup.lng,
-                    destinationLat: q.destination.lat,
-                    destinationLng: q.destination.lng,
-                    fare: q.fare,
-                    passengerName: q.passengerPreview?.name || "Passenger",
-                    paymentMethod: "",
-                    notes: "",
-                    status: "pending",
-                  });
+                  (async () => {
+                    const pickupLabel = await getPlaceLabel(q.pickup.lat, q.pickup.lng);
+                    const destinationLabel = await getPlaceLabel(q.destination.lat, q.destination.lng);
+
+                    setPreviewBooking({
+                      id: q.id,
+                      pickupLat: q.pickup.lat,
+                      pickupLng: q.pickup.lng,
+                      destinationLat: q.destination.lat,
+                      destinationLng: q.destination.lng,
+                      pickupLabel,
+                      destinationLabel,
+                      fare: q.fare,
+                      passengerName: q.passengerPreview?.name || "Passenger",
+                      status: "pending",
+                      bookingType: q.bookingType,   // if your API returns it
+                      partySize: q.partySize || 1,
+                    });
+                  })();
                 }
                 return;
               }
+
+
 
               if (msg?.log) dbg("MAP→RN", msg.log);
               if (msg?.error) {
@@ -757,6 +905,17 @@ export default function DHome() {
           }}
         />
       )}
+
+      {isOnline && (
+        <View pointerEvents="box-none" style={styles.capOverlay}>
+          <View style={[styles.capPill, isFull && styles.capPillFull]}>
+            <Text style={styles.capText}>
+              {totalSeats != null ? `${usedSeats}/${totalSeats} cap` : `${usedSeats} cap`}
+            </Text>
+          </View>
+        </View>
+      )}
+
 
       {/* Accepted passengers list */}
       {isOnline && activeJobs.length > 0 && (
@@ -775,14 +934,12 @@ export default function DHome() {
               }}
             >
               <Text>
-                #{job.id}
-                {job?.passengerName ? ` • ${job.passengerName}` : ""}
+                #{job.id}{job?.passengerName ? ` • ${job.passengerName}` : ""}
                 {" • "}
-                {Number(job.pickupLat)?.toFixed?.(4) ?? "-"},
-                {Number(job.pickupLng)?.toFixed?.(4) ?? "-"}
+                {job.pickupLabel || `${Number(job.pickupLat)?.toFixed?.(4) ?? "-"}, ${Number(job.pickupLng)?.toFixed?.(4) ?? "-"}`}
                 {" → "}
-                {Number(job.destinationLat)?.toFixed?.(4) ?? "-"},
-                {Number(job.destinationLng)?.toFixed?.(4) ?? "-"}
+                {job.destinationLabel || `${Number(job.destinationLat)?.toFixed?.(4) ?? "-"}, ${Number(job.destinationLng)?.toFixed?.(4) ?? "-"}`}
+                {job.bookingType ? ` • ${job.bookingType === 'GROUP' ? `Group(${job.partySize || 1})` : job.bookingType === 'SOLO' ? 'Solo(VIP)' : 'Classic'}` : ''}
               </Text>
             </TouchableOpacity>
           ))}
@@ -792,15 +949,17 @@ export default function DHome() {
       {/* NEW: PoPas preview card (from yellow tag tap) */}
       {previewBooking && !minimized && (
         <View style={styles.popup}>
-          <Text style={styles.popupTitle}>🧍 Potential Passenger</Text>
+          <Text style={styles.popupTitle}>Potential Passenger</Text>
 
+          <Text>From: {previewBooking.pickupLabel || `${Number(previewBooking.pickupLat).toFixed(4)}, ${Number(previewBooking.pickupLng).toFixed(4)}`}</Text>
+          <Text>To: {previewBooking.destinationLabel || `${Number(previewBooking.destinationLat).toFixed(4)}, ${Number(previewBooking.destinationLng).toFixed(4)}`}</Text>
           <Text>
-            From: {Number(previewBooking.pickupLat).toFixed(4)}, {Number(previewBooking.pickupLng).toFixed(4)}
+            Type: {previewBooking.bookingType
+              ? (previewBooking.bookingType === 'GROUP' ? `Group (${previewBooking.partySize || 2})`
+                : previewBooking.bookingType === 'SOLO' ? 'Solo (VIP)' : 'Classic')
+              : '—'}
           </Text>
-          <Text>
-            To: {Number(previewBooking.destinationLat).toFixed(4)}, {Number(previewBooking.destinationLng).toFixed(4)}
-          </Text>
-          <Text>Fare: ₱{previewBooking.fare}</Text>
+          <Text>Fare: ₱{previewBooking.bookingType === 'GROUP' ? (previewBooking.fare * previewBooking.partySize) : previewBooking.fare}</Text>
           <Text>Passenger: {previewBooking.passengerName}</Text>
 
           <TouchableOpacity style={styles.acceptButton} onPress={acceptPreview}>
@@ -819,12 +978,15 @@ export default function DHome() {
       {incomingBooking && !dropoff && !confirmed && !minimized && !previewBooking && (
         <View style={styles.popup}>
           <Text style={styles.popupTitle}>🚕 Incoming Booking</Text>
+          <Text>From: {incomingBooking?.pickupLabel || `${Number(incomingBooking?.pickupLat)?.toFixed?.(4) ?? "-"}, ${Number(incomingBooking?.pickupLng)?.toFixed?.(4) ?? "-"}`}</Text>
+          <Text>To: {incomingBooking?.destinationLabel || `${Number(incomingBooking?.destinationLat)?.toFixed?.(4) ?? "-"}, ${Number(incomingBooking?.destinationLng)?.toFixed?.(4) ?? "-"}`}</Text>
           <Text>
-            From: {Number(incomingBooking?.pickupLat)?.toFixed?.(4) ?? "-"}, {Number(incomingBooking?.pickupLng)?.toFixed?.(4) ?? "-"}
+            Type: {incomingBooking?.bookingType
+              ? (incomingBooking.bookingType === 'GROUP' ? `Group (${incomingBooking.partySize || 1})`
+                : incomingBooking.bookingType === 'SOLO' ? 'Solo (VIP)' : 'Classic')
+              : '—'}
           </Text>
-          <Text>
-            To: {Number(incomingBooking?.destinationLat)?.toFixed?.(4) ?? "-"}, {Number(incomingBooking?.destinationLng)?.toFixed?.(4) ?? "-"}
-          </Text>
+
           <Text>Fare: ₱{incomingBooking?.fare ?? "-"}</Text>
           <Text>Passenger: {incomingBooking?.passengerName ?? "Passenger"}</Text>
 
@@ -965,7 +1127,12 @@ export default function DHome() {
             style={{ backgroundColor: '#4caf50', padding: 10, marginTop: 10, borderRadius: 5 }}
             onPress={async () => {
               try {
-                const idToComplete = bookingIdRef.current || incomingBooking?.id;
+                const idToComplete =
+                  bookingIdRef.current ||
+                  incomingBooking?.id ||
+                  incomingBooking?.bookingId ||
+                  incomingBooking?._id;
+                console.log("Completing bookingId:", idToComplete);
                 if (!idToComplete) {
                   Alert.alert("❌ Error", "Missing booking id.");
                   return;
@@ -995,6 +1162,12 @@ export default function DHome() {
                     destination: null,
                   }));
                 } else {
+                  const idToComplete =
+                    bookingIdRef.current ||
+                    incomingBooking?.id ||
+                    incomingBooking?.bookingId ||
+                    incomingBooking?._id;
+                  console.log("Completing bookingId:", idToComplete);
                   Alert.alert("❌ Error", "Failed to mark booking as complete.");
                 }
               } catch (error) {
@@ -1065,4 +1238,14 @@ const styles = StyleSheet.create({
   },
   popupTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 5 },
   acceptButton: { backgroundColor: '#4caf50', padding: 10, borderRadius: 5, marginTop: 10 },
+  capOverlay: { position: 'absolute', top: 50, right: 12, zIndex: 99 },
+  capPill: {
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  capPillFull: { backgroundColor: '#dc3545' }, // red when full
+  capText: { color: '#fff', fontWeight: '600' },
+
 });

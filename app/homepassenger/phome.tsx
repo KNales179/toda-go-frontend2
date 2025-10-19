@@ -11,6 +11,33 @@ import { API_BASE_URL, MAPTILER_KEY } from "../../config";
 import * as Location from 'expo-location';
 import ChatNotice from "../../components/ChatNotice";
 import { useNavigation } from "@react-navigation/native";
+import { getAuth } from "../utils/authStorage";
+import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system';
+
+
+async function getLocalIconBase64(localPath: any) {
+  const asset = Asset.fromModule(localPath);
+  await asset.downloadAsync(); // ensures we have a real file on device
+  const uri = asset.localUri || asset.uri; // localUri preferred
+  const base64 = await FileSystem.readAsStringAsync(uri!, { encoding: 'base64' });
+  return `data:image/png;base64,${base64}`;
+}
+
+
+const POI_ICON_FILES: Record<string, any> = {
+  cafe: require('../../assets/images/pios/cafe.png'),          
+  convenience: require('../../assets/images/pios/convenience.png'),
+  pharmacy: require('../../assets/images/pios/pharmacy.png'),
+  bank: require('../../assets/images/pios/bank.png'),
+  supermarket: require('../../assets/images/pios/supermarket.png'),
+  restaurant: require('../../assets/images/pios/restaurant.png'),
+  fast_food: require('../../assets/images/pios/restaurant.png'),
+  hospital: require('../../assets/images/pios/hospital.png'),
+  school: require('../../assets/images/pios/school.png'),
+  market: require('../../assets/images/pios/market.png'),
+  parking: require('../../assets/images/pios/parking.png'),
+};
 
 
 const { width } = Dimensions.get("window");
@@ -38,6 +65,34 @@ const calculateFare = (distanceKm: number, discount: DiscountType = 'none') => {
 
 
 export default function PHome() {
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const auth = await getAuth();
+        if (auth?.role === "passenger" && auth?.userId) {
+          setPassengerId(String(auth.userId));
+          return;
+        }
+
+        // 2) fallback to legacy key (keeps old screens working)
+        const legacy = await AsyncStorage.getItem("passengerId");
+        if (legacy) {
+          setPassengerId(legacy);
+          return;
+        }
+
+        // 3) no id → force re-login
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+      } catch {
+        Alert.alert("Error", "Could not load your session. Please log in again.");
+        router.replace("/login_and_reg/plogin");
+      }
+    })();
+  }, []);
+
+
   const { location, loading } = useLocation();
   const [destination, setDestination] = useState<{ latitude: number; longitude: number } | null>(null);
   const [destinationLabel, setDestinationLabel] = useState("");
@@ -74,19 +129,80 @@ export default function PHome() {
   const [discount] = useState<DiscountType>('none'); 
   const [query, setQuery] = useState('');
   const navigation = useNavigation();
-  const [hits, setHits] = useState<Array<{ label: string; lat: number; lon: number }>>([]);
+  const [hits, setHits] = useState<Array<{ label: string; lat: number; lng: number }>>([]);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [currentBooking, setCurrentBooking] = useState<any>(null);
   const status = currentBooking?.status as 'accepted' | 'pending' | 'completed' | 'canceled' | undefined;
   const driverId = currentBooking?.driverId;
   const [passengerId, setPassengerId] = useState<string | null>(null);
-  
+  const [mapReady, setMapReady] = useState(false);
+  const messageQueue = useRef<any[]>([]);
+  const poiFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPoiKeyRef = useRef<string>('');
+  const [showLandmarks, setShowLandmarks] = useState(false);
+  const [iconData, setIconData] = useState<Record<string, string> | null>(null);
+  const lastCenterRef = useRef<{lat:number; lng:number} | null>(null);
+  const poiCacheRef = useRef<Map<string, any[]>>(new Map());
+  const inflightRef  = useRef<Set<string>>(new Set());
+  const lastReqIdRef = useRef(0);
+  const [showPOIs, setShowPOIs] = useState(false);
+  const lastBBoxRef = useRef<{ minLng:number; minLat:number; maxLng:number; maxLat:number; zoom:number } | null>(null);
+  // --- Booking type + party size ---
+  const [bookingType, setBookingType] = useState<'CLASSIC' | 'GROUP' | 'SOLO'>('CLASSIC');
+  const [partySize, setPartySize] = useState<number>(2);
+
+
+  function roundByZoom(value: number, zoom: number) {
+    const decimals =
+      zoom >= 18 ? 3 :
+      zoom >= 16 ? 3 :
+      zoom >= 15 ? 2 :
+      /* <=14 */   2;
+    const m = Math.pow(10, decimals);
+    return Math.round(value * m) / m;
+  }
+
+
+  function haversine(a:{lat:number,lng:number}, b:{lat:number,lng:number}) {
+    const R = 6371000;
+    const toRad = (x:number)=>x*Math.PI/180;
+    const dLat = toRad(b.lat-a.lat);
+    const dLng = toRad(b.lng-a.lng);
+    const s1 = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(s1)); 
+  }
+
+
+  const sendToMap = (msg: any) => {
+    const json = JSON.stringify(msg);
+    if (!mapReady || !mapRef.current) {
+      messageQueue.current.push(json);
+      return;
+    }
+    mapRef.current.postMessage(json);
+  };
+
+
   useEffect(() => {
-    AsyncStorage.getItem("passengerId")
-      .then((v) => setPassengerId(v))
-      .catch(() => setPassengerId(null));
+    (async () => {
+      const out: Record<string, string> = {};
+      for (const k of Object.keys(POI_ICON_FILES)) {
+        out[k] = await getLocalIconBase64(POI_ICON_FILES[k]);
+      }
+      setIconData(out);
+    })();
   }, []);
+
+
+  useEffect(() => {
+    if (mapReady && mapRef.current && messageQueue.current.length) {
+      messageQueue.current.forEach((m) => mapRef.current?.postMessage(m));
+      messageQueue.current = [];
+    }
+  }, [mapReady]);
+
 
   const canShowChatNotice =
     bookingConfirmed && !!bookingId && !!matchedDriver?.driverId && !!passengerId;
@@ -133,14 +249,14 @@ export default function PHome() {
       const fareText = `₱${computedFare} est`;
       setFare(computedFare);
 
-      mapRef.current?.postMessage(JSON.stringify({
+      sendToMap({
         type: 'drawRoute',
         route: polylinePoints,
         distanceKm, 
         distanceText,     
         durationText,
         fareText,  
-      }));
+      });
 
     } catch (err) {
       console.error("❌ Failed to fetch ORS route:", err);
@@ -154,14 +270,12 @@ export default function PHome() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(async () => {
       if (!t || t.length < 3) { setHits([]); return; }
-
-      // bail if we don’t have the user’s location yet
       if (!location) { setHits([]); return; }
 
       try {
         const lat = location.latitude;
-        const lon = location.longitude;
-        const url = `${API_BASE_URL}/api/geocode?q=${encodeURIComponent(t)}&lat=${lat}&lon=${lon}`;
+        const lng = location.longitude; // NOTE: lng
+        const url = `${API_BASE_URL}/api/places-search?q=${encodeURIComponent(t)}&lat=${lat}&lng=${lng}`;
         const r = await fetch(url);
         const data = await r.json();
         setHits(Array.isArray(data) ? data : []);
@@ -172,12 +286,13 @@ export default function PHome() {
   };
 
 
+
   // When a user taps a suggestion
-  const choosePlace = (p: { label: string; lat: number; lon: number }) => {
+  const choosePlace = (p: { label: string; lat: number; lng: number }) => {
     setQuery(p.label);
     setHits([]);
 
-    const dest = { latitude: p.lat, longitude: p.lon };
+    const dest = { latitude: p.lat, longitude: p.lng };
 
     // update UI
     setDestination(dest);
@@ -196,11 +311,11 @@ export default function PHome() {
     );
 
     // (optional) update markers
-    mapRef.current?.postMessage(JSON.stringify({
+    sendToMap({
       type: 'setMarkers',
       destination: dest,
       driver: null,
-    }));
+    });
   };
 
   useEffect(() => {
@@ -248,13 +363,13 @@ export default function PHome() {
           distanceInterval: 5,
         },
         (pos) => {
-          mapRef.current?.postMessage(JSON.stringify({
+          sendToMap({
             type: "updateUserLoc",
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
             accuracy: pos.coords.accuracy ?? 15,
             avatarUrl,
-          }));
+          });
         }
       );
     })();
@@ -272,10 +387,10 @@ export default function PHome() {
             Number.isFinite(h.trueHeading) ? h.trueHeading :
             (Number.isFinite(h.magHeading) ? h.magHeading : null);
           if (bearing !== null) {
-            mapRef.current?.postMessage(JSON.stringify({
+            sendToMap({
               type: "updateHeading",
               bearingDeg: bearing,
-            }));
+            });
           }
         });
       } catch {
@@ -353,6 +468,7 @@ export default function PHome() {
   // Generate map HTML when location changes
   useEffect(() => {
   if (!location) return;
+  const iconJson = JSON.stringify(iconData || {});
 
   const html = String.raw`
   <!DOCTYPE html>
@@ -375,8 +491,15 @@ export default function PHome() {
       <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
       <script>
         // --- Map init ---
-        const map = L.map('map', { zoomControl:true })
-          .setView([${location.latitude}, ${location.longitude}], 15);
+        const map = L.map('map', {
+          zoomControl: true,
+          maxBounds: [[13.96,121.643],[13.88,121.588]],
+          maxBoundsViscosity: 0.5,
+          minZoom: 13,
+          maxZoom: 19, 
+          noWrap: true
+        }).setView([${location.latitude}, ${location.longitude}], 15);
+
 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
           maxZoom:19, attribution:'© OpenStreetMap contributors'
@@ -390,6 +513,71 @@ export default function PHome() {
 
         let routeLine = null;        // drawn polyline
         let distanceTooltip = null;  // route label (distance • time • fare)
+
+        let poiLayer = L.layerGroup().addTo(map);
+        let landmarkLayer = L.layerGroup().addTo(map);
+        let currentZoomLevel = map.getZoom();    // track last zoom to know in/out
+        function bboxContains(b, lat, lng) {
+          return lng >= b.minLng && lng <= b.maxLng && lat >= b.minLat && lat <= b.maxLat;
+        }
+
+        const poiMarkers = new Map();        // id -> L.Marker
+        const iconCache  = {};               // category -> L.Icon
+        let poiBatchHandle = null;           // cancel previous batch
+
+        function getPoiIcon(cat, poiIcons) {
+          if (iconCache[cat]) return iconCache[cat];
+
+          const url = (poiIcons[cat] && poiIcons[cat].includes('base64,'))
+            ? poiIcons[cat]
+            : 'https://cdn-icons-png.flaticon.com/512/854/854878.png'; // fallback
+
+          iconCache[cat] = L.icon({
+            iconUrl: url,
+            iconSize: [28, 28],
+            iconAnchor: [14, 28],
+          });
+          return iconCache[cat];
+        }
+
+        function addOrUpdatePOIMarker(it, poiIcons) {
+          const existing = poiMarkers.get(it.id);
+          if (existing) {
+            // update position if it changed
+            const curr = existing.getLatLng();
+            if (curr.lat !== it.lat || curr.lng !== it.lng) {
+              existing.setLatLng([it.lat, it.lng]);
+            }
+            return;
+          }
+          const icon = getPoiIcon(it.category, poiIcons); // your cached icon getter
+          const marker = L.marker([it.lat, it.lng], { icon });
+
+          // build popup with "Set Destination"
+          const container = document.createElement('div');
+          const title = document.createElement('b');
+          title.textContent = it.name || it.category || 'POI';
+          container.appendChild(title);
+          container.appendChild(document.createElement('br'));
+          const btn = document.createElement('button');
+          btn.textContent = 'Set Destination';
+          btn.style.marginTop = '6px';
+          btn.onclick = function () {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'setDestinationFromPOI',
+              lat: it.lat, lng: it.lng, label: it.name || it.category || 'POI'
+            }));
+          };
+          container.appendChild(btn);
+          marker.bindPopup(container);
+
+          marker.addTo(poiLayer);
+          poiMarkers.set(it.id, marker);
+        }
+        
+        function bboxContains(b, lat, lng) {
+          return lng >= b.minLng && lng <= b.maxLng && lat >= b.minLat && lat <= b.maxLat;
+        }
 
         // --- Icons ---
         const userIcon = L.icon({
@@ -452,6 +640,35 @@ export default function PHome() {
           window.ReactNativeWebView.postMessage(JSON.stringify({ latitude: lat, longitude: lng }));
         });
 
+        (function sendInitialBBox(){
+          const b = map.getBounds();
+          const c = map.getCenter();
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'bbox',
+            bbox: {
+              minLng: b.getWest(), minLat: b.getSouth(),
+              maxLng: b.getEast(), maxLat: b.getNorth()
+            },
+            zoom: map.getZoom(),
+            center: { lat: c.lat, lng: c.lng }
+          }));
+        })();
+
+        map.on('moveend', function () {
+          const b = map.getBounds();
+          const c = map.getCenter();
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'bbox',
+            bbox: {
+              minLng: b.getWest(), minLat: b.getSouth(),
+              maxLng: b.getEast(), maxLat: b.getNorth()
+            },
+            zoom: map.getZoom(),
+            center: { lat: c.lat, lng: c.lng }
+          }));
+        });
+
+
         // --- Message bridge ---
         document.addEventListener('message', function(event){
           let msg = {};
@@ -508,13 +725,175 @@ export default function PHome() {
 
             return;
           }
+
+          if (msg.type === 'requestBbox') {
+            const b = map.getBounds();
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'bbox',
+              bbox: {
+                minLng: b.getWest(),
+                minLat: b.getSouth(),
+                maxLng: b.getEast(),
+                maxLat: b.getNorth()
+              },
+              zoom: map.getZoom()
+            }));
+            return;
+          }
+
+          const poiIcons = ${iconJson};
+          if (msg.type === 'setPOIs' && Array.isArray(msg.items)) {
+            if (poiBatchHandle) {
+              cancelAnimationFrame(poiBatchHandle);
+              poiBatchHandle = null;
+            }
+
+            const z = Number(msg.zoom) || currentZoomLevel;
+            const b = msg.bbox || null;
+
+            // Collect desired items from payload
+            const desired = new Map();
+            for (const it of msg.items) {
+              if (!Number.isFinite(it.lat) || !Number.isFinite(it.lng)) continue;
+              desired.set(it.id, it);
+            }
+            const desiredIds = new Set(desired.keys());
+
+            // Decide strategy based on zoom direction
+            if (z > currentZoomLevel) {
+              // ---- ZOOM IN: accumulate (add new), but prune anything far outside screen
+              if (b) {
+                for (const [id, marker] of poiMarkers) {
+                  const p = marker.getLatLng();
+                  if (!bboxContains(b, p.lat, p.lng)) {
+                    poiLayer.removeLayer(marker);
+                    poiMarkers.delete(id);
+                  }
+                }
+              }
+            } else if (z < currentZoomLevel) {
+              // ---- ZOOM OUT: shrink to what backend sent
+              for (const [id, marker] of poiMarkers) {
+                const keep = desiredIds.has(id);
+                const p = marker.getLatLng();
+                const onScreen = !b || bboxContains(b, p.lat, p.lng);
+                if (!keep || !onScreen) {
+                  poiLayer.removeLayer(marker);
+                  poiMarkers.delete(id);
+                }
+              }
+            } else {
+              // ---- SAME ZOOM (pan): replace by diff within current screen
+              for (const [id, marker] of poiMarkers) {
+                const p = marker.getLatLng();
+                const drop = !desiredIds.has(id) || (b && !bboxContains(b, p.lat, p.lng));
+                if (drop) {
+                  poiLayer.removeLayer(marker);
+                  poiMarkers.delete(id);
+                }
+              }
+            }
+
+            // Build list of new ones to add
+            const toAdd = [];
+            for (const [id, it] of desired) {
+              if (!poiMarkers.has(id)) toAdd.push(it);
+            }
+
+            // ✅ UPDATED PART: adaptive batching for smoother render
+            const total = toAdd.length;
+            const BATCH =
+              total > 300 ? 80 :
+              total > 150 ? 50 :
+              total > 60  ? 35 :
+              25; // small = faster draw
+            const DELAY = total > 150 ? 20 : 10;
+
+            const poiIcons = ${JSON.stringify(iconData || {})};
+
+            let i = 0;
+            const addBatch = () => {
+              const end = Math.min(i + BATCH, total);
+              for (; i < end; i++) {
+                const it = toAdd[i];
+                const icon = getPoiIcon(it.category, poiIcons);
+                const marker = L.marker([it.lat, it.lng], { icon, opacity: 0 }); // start transparent
+
+                const container = document.createElement('div');
+                const title = document.createElement('b');
+                title.textContent = it.name || it.category || 'POI';
+                container.appendChild(title);
+                container.appendChild(document.createElement('br'));
+
+                const btn = document.createElement('button');
+                btn.textContent = 'Set Destination';
+                btn.style.marginTop = '6px';
+                btn.onclick = function () {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'setDestinationFromPOI',
+                    lat: it.lat, lng: it.lng, label: it.name || it.category || 'POI'
+                  }));
+                };
+                container.appendChild(btn);
+
+                marker.bindPopup(container);
+                marker.addTo(poiLayer);
+                poiMarkers.set(it.id, marker);
+
+                // 🔥 Fade-in animation
+                let op = 0;
+                const fade = () => {
+                  op += 0.15;
+                  if (op <= 1) {
+                    marker.setOpacity(op);
+                    requestAnimationFrame(fade);
+                  } else {
+                    marker.setOpacity(1);
+                  }
+                };
+                requestAnimationFrame(fade);
+              }
+
+              if (i < total) {
+                poiBatchHandle = requestAnimationFrame(() => setTimeout(addBatch, DELAY));
+              } else {
+                poiBatchHandle = null;
+              }
+            };
+
+
+            addBatch();
+
+            currentZoomLevel = z;
+            return;
+          }
+
+
+
+
+
+          // Render Landmarks (pin markers)
+          if (msg.type === 'setLandmarks' && Array.isArray(msg.items)) {
+            landmarkLayer.clearLayers();
+            msg.items.forEach(it => {
+              if (!Number.isFinite(it.lat) || !Number.isFinite(it.lng)) return;
+              L.marker([it.lat, it.lng])
+                .bindTooltip(it.name || 'Landmark', { direction: 'top' })
+                .addTo(landmarkLayer);
+            });
+            return;
+          }
+          if (msg.type === 'clearLandmarks') {
+            landmarkLayer.clearLayers();
+            return;
+          }
         });
       </script>
     </body>
   </html>
   `;
   setMapHtml(html);
-  }, [location]);
+  }, [location, iconData]);
 
 
 
@@ -534,6 +913,7 @@ export default function PHome() {
   const handleMapMessage = async (event: any) => {
     try {
       const parsed = JSON.parse(event.nativeEvent.data);
+      // Always see what's coming in:
       if (parsed.latitude && parsed.longitude) {
         setDestination(parsed);
         try {
@@ -550,6 +930,128 @@ export default function PHome() {
           setDropoffName("Selected Location");
         }
       }
+      if (parsed.type === 'bbox' && parsed.bbox) {
+        const { minLng, minLat, maxLng, maxLat } = parsed.bbox;
+        const zoom = Number(parsed.zoom) || 0;
+        lastBBoxRef.current = { minLng, minLat, maxLng, maxLat, zoom };
+        if (!showPOIs || zoom < 14) {
+          sendToMap({ type: 'setPOIs', items: [] });
+          return;
+        };
+
+        const center = parsed.center;
+        if (center && lastCenterRef.current) {
+          const moved = haversine(lastCenterRef.current, center);
+          if (moved < 300) return; // <300m → skip fetch
+        }
+        if (center) lastCenterRef.current = center;
+
+        const key = [
+          zoom,
+          roundByZoom(minLng, zoom),
+          roundByZoom(minLat, zoom),
+          roundByZoom(maxLng, zoom),
+          roundByZoom(maxLat, zoom),
+        ].join('|');
+
+        if (lastPoiKeyRef.current === key) return; // avoid duplicates
+        lastPoiKeyRef.current = key;
+
+        if (poiFetchTimerRef.current) clearTimeout(poiFetchTimerRef.current);
+        poiFetchTimerRef.current = setTimeout(async () => {
+          try {
+            const qs: string[] = [
+              `types=${encodeURIComponent('cafe,convenience,pharmacy,bank,supermarket,restaurant,fast_food,hospital,school,market,parking,terminal')}`,
+              `bbox=${minLng},${minLat},${maxLng},${maxLat}`,
+              `zoom=${zoom}`,
+            ];
+            if (center?.lat != null && center?.lng != null) {
+              qs.push(`clat=${center.lat}`, `clng=${center.lng}`);
+            }
+            const url = `${API_BASE_URL}/api/pois?${qs.join('&')}`;
+            if (poiCacheRef.current.has(key)) {
+              sendToMap({ type: 'setPOIs', items: poiCacheRef.current.get(key) });
+              return;
+            }
+
+            if (inflightRef.current.has(key)) {
+              return;
+            }
+
+            inflightRef.current.add(key);
+
+            const reqId = ++lastReqIdRef.current;
+            
+            try {
+              const qs: string[] = [
+                `types=${encodeURIComponent('cafe,convenience,pharmacy,bank,supermarket,restaurant,fast_food,hospital,school,market,parking,terminal')}`,
+                `bbox=${minLng},${minLat},${maxLng},${maxLat}`,
+                `zoom=${zoom}`,
+              ];
+              if (center?.lat != null && center?.lng != null) {
+                qs.push(`clat=${center.lat}`, `clng=${center.lng}`);
+              }
+              const url = `${API_BASE_URL}/api/pois?${qs.join('&')}`;
+
+              const r = await fetch(url);
+              const items = await r.json();
+
+              if (reqId !== lastReqIdRef.current) {
+                return; // a newer request finished after this one
+              }
+
+              if (Array.isArray(items)) {
+                poiCacheRef.current.set(key, items);
+                sendToMap({ type: 'setPOIs', items });
+              } else {
+                sendToMap({ type: 'setPOIs', items: [] });
+              }
+            } catch (e) {
+              console.log('[ERR] POI fetch failed for', key, e);
+              sendToMap({ type: 'setPOIs', items: [] });
+            } finally {
+              inflightRef.current.delete(key);
+            }
+            const r = await fetch(url);
+            const items = await r.json();
+            if (Array.isArray(items)) {
+              poiCacheRef.current.set(key, items);
+              sendToMap({
+                type: 'setPOIs',
+                items,
+                zoom,                       
+                bbox: { minLng, minLat, maxLng, maxLat },  
+              });
+            }
+
+          } catch {
+            sendToMap({ type: 'setPOIs', items: [] });
+          }
+        }, 500);
+        return;
+      }
+      if (parsed.type === 'setDestinationFromPOI') {
+        const dest = { latitude: parsed.lat, longitude: parsed.lng };
+        setDestination(dest);
+        setDropoffName(parsed.label || 'POI Destination');
+
+        if (!location) {
+          Alert.alert('Location unavailable', 'Waiting for GPS, please try again in a moment.');
+          return;
+        }
+        const { latitude, longitude } = location;
+
+        fetchORSRoute(
+          { latitude: location.latitude, longitude: location.longitude },
+          dest
+        );
+        sendToMap({
+          type: 'setMarkers',
+          destination: dest,
+          driver: null,
+        });
+        return;
+      }
     } catch {}
   };
 
@@ -558,17 +1060,35 @@ export default function PHome() {
       Alert.alert("Missing location info");
       return;
     }
-    setSearching(true)
+    if (!passengerId) {
+      Alert.alert("Not logged in", "Please log in again.");
+      router.replace("/login_and_reg/plogin");
+      return;
+    }
+
+    // Normalize party size based on type
+    const normalizedParty =
+      bookingType === 'GROUP'
+        ? Math.min(5, Math.max(1, Number(partySize) || 1))
+        : 1; // CLASSIC & SOLO always 1
+
+    setSearching(true);
     setAlertedBookingComplete(false);
     setTripCompleted(false);
 
-    const passengerId = await AsyncStorage.getItem("passengerId");
     const bookingData = {
       pickupLat: location.latitude,
       pickupLng: location.longitude,
       destinationLat: destination.latitude,
       destinationLng: destination.longitude,
-      fare, paymentMethod, notes, passengerId
+      fare,
+      paymentMethod,
+      notes,
+      passengerId,
+
+      // NEW: booking type + group seats
+      bookingType,
+      partySize: normalizedParty,
     };
 
     try {
@@ -589,12 +1109,14 @@ export default function PHome() {
 
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Something went wrong");
-      setBookingId(result.booking.id);
+
+      setBookingId(result.booking.bookingId || result.booking.id || result.booking._id);
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to send booking. Please try again.");
       setSearching(false);
     }
   };
+
   // {status === "accepted" && bookingId && (
   //   <ChatNotice
   //     bookingId={bookingId}
@@ -690,12 +1212,6 @@ export default function PHome() {
   }, [bookingId, bookingConfirmed]);
 
   useEffect(() => {
-    if (searching && (!bookingId || tripCompleted)) {
-      setSearching(false);
-    }
-  }, [searching, bookingId, tripCompleted]);
-
-  useEffect(() => {
     let interval: any;
     const pollForBookingCompletion = async () => {
       if (!bookingId) return;
@@ -732,8 +1248,8 @@ export default function PHome() {
           AsyncStorage.removeItem("phomeBookingState").catch(() => {});
 
           // clear map
-          mapRef.current?.postMessage(JSON.stringify({ type: "setMarkers", destination: null, driver: null }));
-          mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+          sendToMap({ type: "setMarkers", destination: null, driver: null });
+          sendToMap({ type: "clearRoute" });
 
           setFare(0);
         }
@@ -777,6 +1293,43 @@ export default function PHome() {
     };
     loadBookingState();
   }, []);
+
+
+  const cancelRideNow = async () => {
+    try {
+      if (!bookingId) {
+        return;
+      }
+
+      const resp = await fetch(`${API_BASE_URL}/api/cancel-booking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId }),
+      });
+      const body = await resp.text();
+
+      // UI reset after server confirms
+      setSearching(false);
+      setBookingId(null);
+      setMatchedDriver(null);
+      setBookingConfirmed(false);
+      setDestination(null);
+      setTripCompleted(false);
+      setAlertedBookingComplete(false);
+      setShowBookingForm(false);
+
+      // Clear map + cached state
+      sendToMap({ type: "setMarkers", destination: null, driver: null });
+      sendToMap({ type: "clearRoute" });
+      await AsyncStorage.removeItem("phomeBookingState");
+      setFare(0);
+    } catch (e) {
+      console.log("[PHOME] cancel error", e);
+      Alert.alert("Cancel error", "Could not cancel ride. Check your connection and try again.");
+    }
+  };
+
+
 
   const submitDriverRating = async () => {
     try {
@@ -847,6 +1400,17 @@ export default function PHome() {
     }
   };
 
+  const loadLandmarks = async () => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/landmarks`);
+      const items = await r.json();
+      sendToMap({ type: 'setLandmarks', items: Array.isArray(items) ? items : [] });
+    } catch {
+      sendToMap({ type: 'setLandmarks', items: [] });
+    }
+  };
+
+
   if (loading || !location) return null;
 
   return (
@@ -862,6 +1426,7 @@ export default function PHome() {
               originWhitelist={["*"]}
               source={{ html: mapHtml }}
               javaScriptEnabled
+              onLoadEnd={() => setMapReady(true)}
               style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: -30, zIndex: 0 }}
               onMessage={handleMapMessage}
               nestedScrollEnabled
@@ -882,7 +1447,7 @@ export default function PHome() {
                 <View style={styles.searchResults}>
                   {hits.map((h, i) => (
                     <TouchableOpacity
-                      key={`${h.lat},${h.lon}-${i}`}
+                      key={`${h.lat},${h.lng}-${i}`}
                       onPress={() => choosePlace(h)}
                       style={styles.searchItem}
                     >
@@ -892,6 +1457,73 @@ export default function PHome() {
                 </View>
               )}
             </View>
+            <TouchableOpacity
+              onPress={() => {
+                if (showLandmarks) {
+                  sendToMap({ type: 'clearLandmarks' });
+                  setShowLandmarks(false);
+                } else {
+                  loadLandmarks(); // same function we made before
+                  setShowLandmarks(true);
+                }
+              }}
+              style={{
+                alignSelf: 'center',
+                marginTop: 6,
+                backgroundColor: showLandmarks ? '#81C3E1' : '#eee',
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 8
+              }}
+            >
+              <Text>{showLandmarks ? 'Hide Landmarks' : 'Explore Landmarks'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (showPOIs) {
+                  setShowPOIs(false);
+                  if (poiFetchTimerRef.current) clearTimeout(poiFetchTimerRef.current);
+                  sendToMap({ type: 'setPOIs', items: [] });
+                } else {
+                  setShowPOIs(true);
+                  const b = lastBBoxRef.current;
+                  if (b) {
+                    const { minLng, minLat, maxLng, maxLat, zoom } = b;
+                    if (zoom >= 14) {
+                      if (poiFetchTimerRef.current) clearTimeout(poiFetchTimerRef.current);
+                      poiFetchTimerRef.current = setTimeout(async () => {
+                        try {
+                          const types = 'cafe,convenience,pharmacy,restaurant,fast_food,bank,supermarket,hospital,school,parking,market';
+                          const url = `${API_BASE_URL}/api/pois?types=${encodeURIComponent(types)}&bbox=${minLng},${minLat},${maxLng},${maxLat}`;
+                          const r = await fetch(url);
+                          const items = await r.json();
+                          sendToMap({ type: 'setPOIs', items: Array.isArray(items) ? items : [] });
+                        } catch {
+                          sendToMap({ type: 'setPOIs', items: [] });
+                        }
+                      }, 0);
+                    } else {
+                      sendToMap({ type: 'setPOIs', items: [] });
+                    }
+                  } else {
+                    sendToMap({ type: 'requestBbox' });
+                  }
+                }
+              }}
+
+              style={{
+                alignSelf: 'center',
+                marginTop: 6,
+                backgroundColor: showPOIs ? '#81C3E1' : '#eee',
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 8
+              }}
+            >
+              <Text>{showPOIs ? 'Hide Places' : 'Show Places'}</Text>
+            </TouchableOpacity>
+
+
           </View>
 
           <View style={styles.overlayContainer}>
@@ -899,13 +1531,11 @@ export default function PHome() {
 
               {searching && (
                 <View style={{ backgroundColor: "#fff3cd", padding: 10, marginTop: 10, borderRadius: 8 }}>
-                  <Text style={{ fontWeight: "bold" }}>🔍 Finding a driver...</Text>
+                  <Text style={{ fontWeight: "bold" }}>
+                    🔍 Finding a driver... {bookingType === 'GROUP' ? `Group (${partySize})` : bookingType === 'SOLO' ? 'Solo (VIP)' : 'Classic'}
+                  </Text>
                   <TouchableOpacity
-                    onPress={() => {
-                      setSearching(false);
-                      setBookingId(null);
-                      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-                    }}
+                    onPress={cancelRideNow}
                     style={{ backgroundColor: "#f44336", padding: 10, marginTop: 10, borderRadius: 5 }}
                   >
                     <Text style={{ color: "white", textAlign: "center" }}>CANCEL RIDE</Text>
@@ -990,20 +1620,24 @@ export default function PHome() {
                         <TouchableOpacity
                           onPress={async () => {
                             try {
-                              await fetch(`${API_BASE_URL}/api/cancel-booking`, {
+                              const resp = await fetch(`${API_BASE_URL}/api/cancel-booking`, {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ bookingId }),
                               });
+                              const body = await resp.text();
+
                               await AsyncStorage.removeItem("phomeBookingState");
-                            } catch {}
+                            } catch (e) {
+                              console.log("[PHOME] cancel error", e);
+                            }
                             setSearching(false);
                             setBookingId(null);
                             setMatchedDriver(null);
                             setDestination(null);
                             setBookingConfirmed(false);
-                            mapRef.current?.postMessage(JSON.stringify({ type: "setMarkers", destination: null, driver: null }));
-                            mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+                            sendToMap({ type: "setMarkers", destination: null, driver: null });
+                            sendToMap({ type: "clearRoute" });
                             setFare(0);
                             if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
                           }}
@@ -1021,23 +1655,119 @@ export default function PHome() {
             {showBookingForm && (
               <View style={styles.panel}>
                 <Text style={styles.panelTitle}>Booking Details</Text>
+
+                {/* Booking Type Selector */}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                  {[
+                    { key: 'CLASSIC', label: 'Classic' },
+                    { key: 'GROUP', label: 'Group' },
+                    { key: 'SOLO', label: 'Solo' },
+                  ].map((opt) => {
+                    const active = bookingType === (opt.key as any);
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => {
+                          setBookingType(opt.key as any);
+                          if (opt.key !== 'GROUP') setPartySize(2);
+                        }}
+                        style={{
+                          flex: 1,
+                          backgroundColor: active ? '#111' : '#fff',
+                          borderWidth: 1,
+                          borderColor: active ? '#111' : '#ccc',
+                          paddingVertical: 10,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ color: active ? '#fff' : '#111', fontWeight: '600' }}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Notes for Solo & Group */}
+                {bookingType === 'SOLO' && (
+                  <Text style={{ marginTop: 6, color: '#444' }}>
+                    • VIP ride — driver will be dedicated to you.
+                  </Text>
+                )}
+                {bookingType === 'GROUP' && (
+                  <Text style={{ marginTop: 6, color: '#444' }}>
+                    • Group ride — specify how many passengers (including you).
+                  </Text>
+                )}
+
+                {/* Group Party Size Stepper */}
+                {bookingType === 'GROUP' && (
+                  <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ fontWeight: '600' }}>Passengers (2-6)</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <TouchableOpacity
+                        onPress={() => setPartySize((p) => Math.max(2, p - 1))}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#eee', borderRadius: 8, marginRight: 10 }}
+                      >
+                        <Text style={{ fontSize: 18 }}>–</Text>
+                      </TouchableOpacity>
+                      <Text style={{ minWidth: 28, textAlign: 'center', fontWeight: '700' }}>{partySize}</Text>
+                      <TouchableOpacity
+                        onPress={() => setPartySize((p) => Math.min(6, p + 1))}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#eee', borderRadius: 8, marginLeft: 10 }}
+                      >
+                        <Text style={{ fontSize: 18 }}>＋</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
                 <ScrollView style={styles.inputsContainer} keyboardDismissMode="on-drag">
+                  <Text>From:</Text>
                   <TextInput style={styles.input} placeholder="Saan ang pick-up?" value={pickupName} editable />
+                  <Text>To:</Text>
                   <TextInput style={styles.input} placeholder="Saan ang drop-off?" value={dropoffName} editable />
-                  <TextInput style={styles.input} placeholder="Name this location (optional: Home, Work, etc.)" value={destinationLabel} onChangeText={setDestinationLabel} />
+                  {/* <TextInput
+                    style={styles.input}
+                    placeholder="Name this location (optional: Home, Work, etc.)"
+                    value={destinationLabel}
+                    onChangeText={setDestinationLabel}
+                  /> */}
                   <TextInput style={styles.input} placeholder="Notes sa driver" value={notes} onChangeText={setNotes} />
                   <TextInput style={styles.input} placeholder="Paano ka magbabayad?" value={paymentMethod} onChangeText={setPaymentMethod} />
                 </ScrollView>
+
                 <View style={styles.fareContainer}>
-                  <Text style={styles.totalFare}>Total Fare: ₱{fare}</Text>
-                  <TouchableOpacity style={styles.bookButton} onPress={handleBookNow}>
+                  <View>
+                    <Text style={styles.totalFare}>
+                      Fare:
+                    </Text>
+                    <Text style={{ paddingLeft: 20 }}>
+                      ₱{fare} {bookingType === 'SOLO' ? '(VIP)' : bookingType === 'GROUP' ? `x${partySize}` : ''}
+                    </Text>
+                    <Text style={styles.totalFare}>
+                      Total Fare: ₱
+                      {bookingType === 'GROUP' ? (fare * partySize).toFixed(2) : fare.toFixed(2)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.bookButton,
+                      // disable if invalid group count or no destination
+                      ((bookingType === 'GROUP' && (partySize < 2 || partySize > 6)) || !destination) && { opacity: 0.4 },
+                    ]}
+                    disabled={(bookingType === 'GROUP' && (partySize < 2 || partySize > 6)) || !destination}
+                    onPress={handleBookNow}
+                  >
                     <Text style={styles.bookButtonText}>BOOK NOW</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             )}
 
-            {!matchedDriver && !searching && !showBookingForm && (
+
+            {!showBookingForm && !(searching || !!bookingId || bookingConfirmed || !!matchedDriver) && (
               <TouchableOpacity
                 onPress={() => setShowBookingForm(true)}
                 style={{ position: "absolute", bottom: 10, backgroundColor: "#81C3E1", padding: 10, borderRadius: 8 }}
@@ -1159,7 +1889,7 @@ const styles = StyleSheet.create({
   panelTitle: { fontWeight: 'bold', marginBottom: 5 },
   inputsContainer: { marginTop: 10, maxHeight: 180 },
   input: { backgroundColor: '#FFF', borderRadius: 10, padding: 10, marginVertical: 5 },
-  fareContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+  fareContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, borderTopWidth:1, },
   ratingModalOverlay: {
     position: "absolute", top: -100, left: 0, right: 0, bottom: 10,
     backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", zIndex: 999,

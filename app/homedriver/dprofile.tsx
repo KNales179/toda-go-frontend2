@@ -11,6 +11,7 @@ import { ImagePickerAsset } from "expo-image-picker";
 import { API_BASE_URL } from "../../config";
 import { useFocusEffect } from "@react-navigation/native";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { clearAuth } from "../utils/authStorage";
 
 const { width } = Dimensions.get("window");
 
@@ -325,6 +326,7 @@ export default function DProfile() {
   const handleLogout = async () => {
     try {
       await AsyncStorage.removeItem("driverId");
+      await clearAuth();
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("../login_and_reg/dlogin");
     } catch (error) {

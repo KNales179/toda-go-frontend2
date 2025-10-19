@@ -9,6 +9,7 @@ import DProfile from "./dprofile";
 const Tab = createBottomTabNavigator();
 
 export default function TabsLayout() {
+  console.log("AUTH:N1:homedriver:layout:render");
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({

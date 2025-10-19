@@ -1,34 +1,28 @@
 // DChats.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Dimensions, Image, RefreshControl
+  ActivityIndicator, Dimensions, Image
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../../config";
 import { router } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { io } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 
-const API = `${API_BASE_URL.replace(/\/$/, "")}/api/chat`;
 const { width } = Dimensions.get("window");
+const API = `${API_BASE_URL.replace(/\/$/, "")}/api/chat`;
+const SOCKET_URL = API_BASE_URL.replace(/\/api\/?$/, "");
 
 export default function DChats() {
   const [driverId, setDriverId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const pollRef = useRef<any>(null);
+  const socketRef = useRef<Socket | null>(null);
 
-  useEffect(() => {
-    AsyncStorage.getItem("driverId")
-      .then(v => setDriverId(v))
-      .catch(() => setDriverId(null));
-  }, []);
-
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
     if (!driverId) return;
     try {
-      if (!refreshing) setLoading(sessions.length === 0);
       const res = await fetch(`${API}/sessions/driver/${driverId}`);
       const data = await res.json();
       setSessions(Array.isArray(data) ? data : []);
@@ -36,28 +30,43 @@ export default function DChats() {
       console.error("❌ fetch driver sessions:", err);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  };
+  }, [driverId]);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchSessions();
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(fetchSessions, 5000);
-      return () => { if (pollRef.current) clearInterval(pollRef.current); };
-    }, [driverId])
-  );
+  useEffect(() => {
+    AsyncStorage.getItem("driverId")
+      .then(v => setDriverId(v))
+      .catch(() => setDriverId(null));
+  }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
+  useEffect(() => {
+    if (!driverId) return;
+
+    // connect socket once
+    const s = io(SOCKET_URL, { transports: ["websocket"] });
+    socketRef.current = s;
+
+    // initial fetch
     fetchSessions();
-  };
+
+    // subscribe for updates
+    const onUpd = () => {
+      fetchSessions();
+    };
+    s.emit("sessions:subscribe", { driverId, role: "driver" });
+    s.on("sessions:update", onUpd);
+
+    return () => {
+      s.off("sessions:update", onUpd);
+      s.disconnect();
+      socketRef.current = null;
+    };
+  }, [driverId, fetchSessions]);
 
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={styles.row}
-      onPress={() => {
+      onPress={() =>
         router.push({
           pathname: "/ChatRoom",
           params: {
@@ -66,8 +75,8 @@ export default function DChats() {
             passengerId: item.passengerId,
             role: "driver",
           },
-        });
-      }}
+        })
+      }
     >
       <View style={{ flex: 1 }}>
         <Text style={styles.name}>{item.passengerName || "Passenger"}</Text>
@@ -81,14 +90,23 @@ export default function DChats() {
     </TouchableOpacity>
   );
 
-  if (loading) return <View style={styles.loading}><ActivityIndicator /></View>;
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>MESSAGES</Text>
       {sessions.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <Image source={require('../../assets/images/chat.png')} style={styles.chatImage} />
+          <Image
+            source={require("../../assets/images/chat.png")}
+            style={styles.chatImage}
+          />
           <Text style={styles.message}>
             Wala pang chat. Kapag may pasahero kang nakausap, dito lalabas yan.
           </Text>
@@ -98,9 +116,6 @@ export default function DChats() {
           data={sessions}
           keyExtractor={(i) => `${i.passengerId}`}
           renderItem={renderItem}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
         />
       )}
     </View>
@@ -116,6 +131,6 @@ const styles = StyleSheet.create({
   time: { fontSize: 11, color: "#888" },
   loading: { flex: 1, justifyContent: "center", alignItems: "center" },
   emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
-  chatImage: { width: 150, height: 150, marginBottom: 20, resizeMode: 'contain' },
-  message: { textAlign: 'center', fontSize: 14, color: '#333' },
+  chatImage: { width: 150, height: 150, marginBottom: 20, resizeMode: "contain" },
+  message: { textAlign: "center", fontSize: 14, color: "#333" },
 });
