@@ -1,0 +1,26 @@
+{
+    "sourceFile": "package.json",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1760905855699,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1760946994964,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,7 +1,9 @@\n {\n-  \"engines\": { \"node\": \">=18 <21\" },\n-  \"packageManager\": \"npm@10.8.1\",\n+  \"engines\": {\n+    \"node\": \">=18 <21\"\n+  },\n+  \"packageManager\": \"yarn@1.22.22\",\n   \"name\": \"toda-go\",\n   \"main\": \"expo-router/entry\",\n   \"version\": \"1.0.0\",\n   \"scripts\": {\n"
+                },
+                {
+                    "date": 1761091817162,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -4,14 +4,14 @@\n   },\n   \"packageManager\": \"yarn@1.22.22\",\n   \"name\": \"toda-go\",\n   \"main\": \"expo-router/entry\",\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.1.0\",\n   \"scripts\": {\n     \"start\": \"expo start\",\n     \"reset-project\": \"node ./scripts/reset-project.js\",\n-    \"android\": \"expo start --android\",\n-    \"ios\": \"expo start --ios\",\n+    \"android\": \"expo run:android\",\n+    \"ios\": \"expo run:ios\",\n     \"web\": \"expo start --web\",\n     \"test\": \"jest --watchAll\",\n     \"lint\": \"expo lint\"\n   },\n@@ -30,8 +30,9 @@\n     \"expo-constants\": \"~17.1.7\",\n     \"expo-font\": \"~13.3.2\",\n     \"expo-haptics\": \"~14.1.4\",\n     \"expo-image-picker\": \"~16.1.4\",\n+    \"expo-intent-launcher\": \"^13.0.7\",\n     \"expo-linking\": \"~7.1.7\",\n     \"expo-location\": \"~18.1.6\",\n     \"expo-router\": \"~5.1.7\",\n     \"expo-splash-screen\": \"~0.30.10\",\n@@ -39,9 +40,8 @@\n     \"expo-symbols\": \"~0.4.5\",\n     \"expo-system-ui\": \"~5.0.11\",\n     \"expo-web-browser\": \"~14.2.0\",\n     \"firebase\": \"^11.6.0\",\n-    \"jest-expo\": \"~53.0.10\",\n     \"react\": \"19.0.0\",\n     \"react-dom\": \"19.0.0\",\n     \"react-native\": \"0.79.6\",\n     \"react-native-gesture-handler\": \"~2.24.0\",\n@@ -52,10 +52,9 @@\n     \"react-native-screens\": \"~4.11.1\",\n     \"react-native-svg\": \"15.11.2\",\n     \"react-native-web\": \"^0.20.0\",\n     \"react-native-webview\": \"13.13.5\",\n-    \"socket.io-client\": \"^4.8.1\",\n-    \"undefined\": \"\\\\\"\n+    \"socket.io-client\": \"^4.8.1\"\n   },\n   \"devDependencies\": {\n     \"@babel/core\": \"^7.26.0\",\n     \"@types/jest\": \"^29.5.12\",\n"
+                }
+            ],
+            "date": 1760905855699,
+            "name": "Commit-0",
+            "content": "{\n  \"engines\": { \"node\": \">=18 <21\" },\n  \"packageManager\": \"npm@10.8.1\",\n  \"name\": \"toda-go\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"reset-project\": \"node ./scripts/reset-project.js\",\n    \"android\": \"expo start --android\",\n    \"ios\": \"expo start --ios\",\n    \"web\": \"expo start --web\",\n    \"test\": \"jest --watchAll\",\n    \"lint\": \"expo lint\"\n  },\n  \"jest\": {\n    \"preset\": \"jest-expo\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^14.1.0\",\n    \"@react-native-async-storage/async-storage\": \"2.1.2\",\n    \"@react-native-community/datetimepicker\": \"8.4.1\",\n    \"@react-native-picker/picker\": \"2.11.1\",\n    \"@react-navigation/bottom-tabs\": \"^7.2.0\",\n    \"@react-navigation/native\": \"^7.0.14\",\n    \"expo\": \"~53.0.23\",\n    \"expo-blur\": \"~14.1.5\",\n    \"expo-constants\": \"~17.1.7\",\n    \"expo-font\": \"~13.3.2\",\n    \"expo-haptics\": \"~14.1.4\",\n    \"expo-image-picker\": \"~16.1.4\",\n    \"expo-linking\": \"~7.1.7\",\n    \"expo-location\": \"~18.1.6\",\n    \"expo-router\": \"~5.1.7\",\n    \"expo-splash-screen\": \"~0.30.10\",\n    \"expo-status-bar\": \"~2.2.3\",\n    \"expo-symbols\": \"~0.4.5\",\n    \"expo-system-ui\": \"~5.0.11\",\n    \"expo-web-browser\": \"~14.2.0\",\n    \"firebase\": \"^11.6.0\",\n    \"jest-expo\": \"~53.0.10\",\n    \"react\": \"19.0.0\",\n    \"react-dom\": \"19.0.0\",\n    \"react-native\": \"0.79.6\",\n    \"react-native-gesture-handler\": \"~2.24.0\",\n    \"react-native-maps\": \"1.20.1\",\n    \"react-native-reanimated\": \"~3.17.4\",\n    \"react-native-root-toast\": \"^3.6.0\",\n    \"react-native-safe-area-context\": \"5.4.0\",\n    \"react-native-screens\": \"~4.11.1\",\n    \"react-native-svg\": \"15.11.2\",\n    \"react-native-web\": \"^0.20.0\",\n    \"react-native-webview\": \"13.13.5\",\n    \"socket.io-client\": \"^4.8.1\",\n    \"undefined\": \"\\\\\"\n  },\n  \"devDependencies\": {\n    \"@babel/core\": \"^7.26.0\",\n    \"@types/jest\": \"^29.5.12\",\n    \"@types/react\": \"~19.0.10\",\n    \"@types/react-test-renderer\": \"^18.3.0\",\n    \"jest\": \"~29.7.0\",\n    \"jest-expo\": \"53.0.10\",\n    \"nodemon\": \"^3.1.9\",\n    \"typescript\": \"~5.8.3\"\n  },\n  \"private\": true\n}\n"
+        }
+    ]
+}

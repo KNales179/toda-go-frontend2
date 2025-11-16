@@ -94,9 +94,9 @@ export default function PRegister() {
       <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
       <Text style={styles.title}>Passenger Registration</Text>
 
-      <TextInput style={styles.input} placeholder="First Name" value={firstname} onChangeText={setFirstname} />
-      <TextInput style={styles.input} placeholder="Middle Name" value={middlename} onChangeText={setMiddlename} />
-      <TextInput style={styles.input} placeholder="Last Name" value={lastname} onChangeText={setLastname} />
+      <TextInput style={[styles.input, {color: firstname ? "#000" : "#888"}]} placeholder="First Name" placeholderTextColor="#A0A0A0" value={firstname} onChangeText={setFirstname} />
+      <TextInput style={[styles.input, {color: middlename ? "#000" : "#888"}]} placeholder="Middle Name" placeholderTextColor="#A0A0A0" value={middlename} onChangeText={setMiddlename} />
+      <TextInput style={[styles.input, {color: lastname ? "#000" : "#888"}]} placeholder="Last Name" placeholderTextColor="#A0A0A0" value={lastname} onChangeText={setLastname} />
 
       <TouchableOpacity style={styles.input} onPress={() => setShowDatePicker(true)}>
         <Text style={{ color: birthday ? 'black' : '#aaa' }}>
@@ -109,13 +109,13 @@ export default function PRegister() {
           mode="date"
           display="default"
           onChange={handleDateChange}
-          maximumDate={new Date()} // can't select future
+          maximumDate={new Date()}
         />
       )}
 
-      <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-      <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
-      <TextInput style={styles.input} placeholder="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
+      <TextInput style={[styles.input, {color: email ? "#000" : "#888"}]} placeholder="Email" placeholderTextColor="#A0A0A0" value={email} onChangeText={setEmail} keyboardType="email-address" />
+      <TextInput style={[styles.input, {color: password ? "#000" : "#888"}]} placeholder="Password" placeholderTextColor="#A0A0A0" value={password} onChangeText={setPassword} secureTextEntry />
+      <TextInput style={[styles.input, {color: confirmPassword ? "#000" : "#888"}]} placeholder="Confirm Password" placeholderTextColor="#A0A0A0" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
 
       <TouchableOpacity style={styles.button} onPress={handleRegister}>
         <Text style={styles.buttonText}>Register</Text>

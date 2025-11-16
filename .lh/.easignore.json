@@ -1,0 +1,22 @@
+{
+    "sourceFile": ".easignore",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 1,
+            "patches": [
+                {
+                    "date": 1760908505846,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1760946138244,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,5 +1,5 @@\n-# ignore only heavy or local folders\r\n+# ignore heavy/local\r\n node_modules\r\n .expo\r\n .expo-shared\r\n dist\r\n@@ -8,9 +8,9 @@\n .history\r\n toda-go-backend\r\n .DS_Store\r\n \r\n-# keep important files for build\r\n+# keep these for the build\r\n !package.json\r\n-!package-lock.json\r\n+!yarn.lock\r\n !app.json\r\n !eas.json\r\n"
+                }
+            ],
+            "date": 1760908505846,
+            "name": "Commit-0",
+            "content": "# ignore only heavy or local folders\r\nnode_modules\r\n.expo\r\n.expo-shared\r\ndist\r\nweb-build\r\n.git\r\n.history\r\ntoda-go-backend\r\n.DS_Store\r\n\r\n# keep important files for build\r\n!package.json\r\n!package-lock.json\r\n!app.json\r\n!eas.json\r\n"
+        }
+    ]
+}

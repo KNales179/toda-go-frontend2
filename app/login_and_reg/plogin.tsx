@@ -1,19 +1,12 @@
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-  TextInput,
-  StatusBar,
-  Alert,
-  Keyboard
+  View, Text, TouchableOpacity, StyleSheet, Dimensions,
+  TextInput, StatusBar, Alert, Keyboard
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import {API_BASE_URL} from "../../config";
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from "../../config";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { saveAuth } from "../utils/authStorage";
 
 const { width } = Dimensions.get("window");
@@ -22,11 +15,41 @@ export default function PLogin() {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [busy, setBusy] = useState(false); // (4) prevent double taps
   const router = useRouter();
 
+  async function wakeBackend(BASE: string) {
+    const healthUrl = `${BASE}/health`;
+    const warmUrl = `${BASE}/warmup`;
+
+    for (let i = 0; i < 5; i++) {
+      try {
+        const r = await fetch(healthUrl, { cache: "no-store" });
+        if (r.ok) return true;
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    await fetch(warmUrl).catch(() => {});
+    const started = Date.now();
+    while (Date.now() - started < 60000) {
+      try {
+        const r = await fetch(healthUrl, { cache: "no-store" });
+        if (r.ok) return true;
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return false;
+  }
+
   const loginUser = async () => {
+    if (busy) return;            // (4) bail if already logging in
+    setBusy(true);               // (4) lock the button
+
     Keyboard.dismiss();
+
     try {
+      // if (__DEV__) { await wakeBackend(API_BASE_URL); }
 
       const response = await fetch(`${API_BASE_URL}/api/login/passenger/login`, {
         method: "POST",
@@ -34,49 +57,46 @@ export default function PLogin() {
         body: JSON.stringify({ email, password: pass }),
       });
 
+      // (5) defensive JSON parsing
       const text = await response.text();
-      console.log("Raw server response:", text);
-
-      let data: any;
+      let data: any = null;
       try {
-        data = JSON.parse(text);
+        data = text ? JSON.parse(text) : null;
       } catch {
-        console.error("Server did not return JSON:", text);
-        throw new Error("Invalid server response: not JSON");
+        console.log("[plogin] non-JSON body (first 200):", text.slice(0, 200));
       }
 
       if (!response.ok) {
-        throw new Error(data?.error || "Invalid credentials");
+        throw new Error(
+          data?.error || data?.message || `HTTP ${response.status}`
+        );
       }
 
-      // accept multiple shapes
       const passengerId =
-        data?.userId ||
-        data?.passenger?._id ||
-        data?.user?._id ||
-        data?._id;
+        data?.userId || data?.passenger?._id || data?.user?._id || data?._id;
 
-      if (!passengerId) {
+      if (!passengerId)
         throw new Error("Login succeeded but no passengerId returned");
-      }
 
-      // unified saved auth
-      await saveAuth({
-        role: "passenger",
-        userId: String(passengerId),
-        token: data?.token,
-      });
+      // await saveAuth({
+      //   role: "passenger",
+      //   userId: String(passengerId),
+      //   token: data?.token,
+      // });
       await AsyncStorage.setItem("passengerId", String(passengerId));
-
 
       Alert.alert("Login Successful", "Welcome!");
       router.replace("../homepassenger/phome");
     } catch (error: any) {
-      console.error("Login error (passenger):", error);
+      if (error?.name === "AbortError") {
+        console.log("[login] fetch aborted (backend slow or cold start?)");
+      }
+      console.error("Login error (passenger):", error, error?.stack);
       Alert.alert("Login Failed", error?.message || "Network/server error");
+    } finally {
+      setBusy(false);            // (4) unlock the button
     }
   };
-
 
   return (
     <View style={styles.container}>
@@ -116,15 +136,15 @@ export default function PLogin() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.forgot}>
-          <Text style={styles.forgotText}>Forget password?</Text>
+        <TouchableOpacity
+          style={[styles.signInBtn, busy && styles.signInBtnDisabled]} // (4) visual + disabled
+          onPress={loginUser}
+          disabled={busy}
+        >
+          <Text style={styles.signInText}>{busy ? "Signing in..." : "Sign In"}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.signInBtn} onPress={loginUser}>
-          <Text style={styles.signInText}>Sign In</Text>
-        </TouchableOpacity>
-
-        <View style={styles.divider}>
+        <View className="divider" style={styles.divider}>
           <View style={styles.line} />
           <Text style={styles.orText}>or</Text>
           <View style={styles.line} />
@@ -132,7 +152,10 @@ export default function PLogin() {
 
         <Text style={styles.signupPrompt}>
           Don't have an account?{" "}
-          <Text style={styles.signupLink} onPress={() => router.push("/login_and_reg/pregister")}>
+          <Text
+            style={styles.signupLink}
+            onPress={() => router.push("/login_and_reg/pregister")}
+          >
             Sign Up
           </Text>
         </Text>
@@ -166,6 +189,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 25,
   },
+  signInBtnDisabled: { opacity: 0.6 }, // (4)
   signInText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   divider: { flexDirection: "row", alignItems: "center", marginBottom: 25 },
   line: { flex: 1, height: 1, backgroundColor: "#D1D1D1" },

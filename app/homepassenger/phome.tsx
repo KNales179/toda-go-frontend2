@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, TextInput, Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard, Image, BackHandler, ScrollView } from "react-native";
+import { View, 
+  Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, 
+  TextInput, Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, 
+  Keyboard, Image, BackHandler, ScrollView, AppState, Linking  } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
@@ -14,6 +17,10 @@ import { useNavigation } from "@react-navigation/native";
 import { getAuth } from "../utils/authStorage";
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { useFocusEffect } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
+
 
 
 async function getLocalIconBase64(localPath: any) {
@@ -40,6 +47,7 @@ const POI_ICON_FILES: Record<string, any> = {
 };
 
 
+
 const { width } = Dimensions.get("window");
 
 type DiscountType = 'none' | 'senior' | 'student' | 'pwd';
@@ -60,6 +68,32 @@ const calculateFare = (distanceKm: number, discount: DiscountType = 'none') => {
 
   return Math.round(fare); 
 };
+
+async function ensureLocationEnabled() {
+  const services = await Location.hasServicesEnabledAsync();
+  const perm = await Location.getForegroundPermissionsAsync();
+
+  if (!services || perm.status !== 'granted') {
+    Alert.alert(
+      "Enable Location",
+      "We need your location for live tracking. Please enable GPS and grant permission.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Open Settings",
+          onPress: () => {
+            if (Platform.OS === 'android') IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS);
+            else Linking.openURL('app-settings:');
+          }
+        }
+      ]
+    );
+    return false;
+  }
+  return true;
+}
+
+
 
 
 
@@ -94,6 +128,7 @@ export default function PHome() {
 
 
   const { location, loading } = useLocation();
+  const [copied, setCopied] = useState(false);
   const [destination, setDestination] = useState<{ latitude: number; longitude: number } | null>(null);
   const [destinationLabel, setDestinationLabel] = useState("");
   const [notes, setNotes] = useState("");
@@ -151,7 +186,54 @@ export default function PHome() {
   // --- Booking type + party size ---
   const [bookingType, setBookingType] = useState<'CLASSIC' | 'GROUP' | 'SOLO'>('CLASSIC');
   const [partySize, setPartySize] = useState<number>(2);
+  const userMarkerOkRef = useRef(false);
+  const [livePos, setLivePos] = useState<{latitude:number; longitude:number} | null>(null);
+  const initialLocRef = useRef<{ latitude:number; longitude:number } | null>(null);
+  const routeFramedRef = useRef(false);
+  const lastRouteDestKeyRef = useRef<string | null>(null);
+  const lastOriginRef = useRef<{lat:number; lng:number} | null>(null);
+  const lastRouteFromRef = useRef<{lat:number; lng:number} | null>(null);
+  const lastRouteToRef   = useRef<{lat:number; lng:number} | null>(null);
+  const lastRouteAtRef   = useRef(0);
+  const [pickupLoc, setPickupLoc] = useState<{ latitude:number; longitude:number } | null>(null);
+  const [pickup, setPickup] = useState<{ latitude:number; longitude:number } | null>(null);
+  const [bookedFor, setBookedFor] = useState(false);
+  const [riderName, setRiderName] = useState("");
+  const [riderPhone, setRiderPhone] = useState("");
+  const [selectingPickup, setSelectingPickup] = useState(false); // map-tap to set pickup
 
+
+
+  const ROUTE_MIN_MOVE_M   = 35;   // recompute if user moved >= 35 m
+  const ROUTE_MIN_INTERVAL = 8000; // or every 8s, whichever comes first
+
+  const toLatLng = (p:{latitude:number; longitude:number}) => ({ lat: p.latitude, lng: p.longitude });
+
+
+  function ensureUserMarker(lat: number, lng: number) {
+    let attempts = 0;
+    userMarkerOkRef.current = false;
+
+    const tryOnce = () => {
+      attempts += 1;
+      sendToMap({ type: 'ensureUserMarker', latitude: lat, longitude: lng });
+
+      if (!userMarkerOkRef.current && attempts < 6) {
+        setTimeout(tryOnce, 400);  // retry every 400ms up to ~2s
+      }
+    };
+
+    tryOnce();
+  }
+
+  const handleCopy = async () => {
+    const n = paymentInfo?.driverPayment?.number;
+    if (!n) return;
+
+    await Clipboard.setStringAsync(n);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   function roundByZoom(value: number, zoom: number) {
     const decimals =
@@ -184,6 +266,11 @@ export default function PHome() {
     mapRef.current.postMessage(json);
   };
 
+  useEffect(() => {
+    if (!mapReady || !iconData) return;
+    sendToMap({ type: 'preloadIcons', icons: iconData });
+  }, [mapReady, iconData]);
+
 
   useEffect(() => {
     (async () => {
@@ -202,67 +289,135 @@ export default function PHome() {
       messageQueue.current = [];
     }
   }, [mapReady]);
+  useEffect(() => {
+    if (mapReady && location) {
+      ensureUserMarker(location.latitude, location.longitude);
+    }
+  }, [mapReady, location]);
+
+  useEffect(() => {
+    if (location && !pickup) {
+      setPickup({ latitude: location.latitude, longitude: location.longitude });
+    }
+  }, [location]);
 
 
-  const canShowChatNotice =
-    bookingConfirmed && !!bookingId && !!matchedDriver?.driverId && !!passengerId;
+  useFocusEffect(React.useCallback(() => { ensureLocationEnabled(); }, []));
+
+  // call on mount
+  useEffect(() => { ensureLocationEnabled(); }, []);
+
+  // call on resume
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') ensureLocationEnabled();
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!destination || !pickup) return;
+
+    const destKey = `${destination.latitude.toFixed(6)},${destination.longitude.toFixed(6)}`;
+
+    if (lastRouteDestKeyRef.current !== destKey) {
+      fetchORSRoute(pickup, destination, true); 
+      routeFramedRef.current = true;
+      lastRouteDestKeyRef.current = destKey;
+      lastOriginRef.current = { lat: pickup.latitude, lng: pickup.longitude };
+    }
+  }, [destination, pickup]);
+
+  const canShowChatNotice = bookingConfirmed && !!bookingId && !!matchedDriver?.driverId && !!passengerId;
+
+  const setPickupToMyLocation = () => {
+    if (!location) { Alert.alert("GPS not ready"); return; }
+    setPickup({ latitude: location.latitude, longitude: location.longitude });
+  };
+
 
   // ---------- ORS: fetch route and draw in WebView ----------
+  const routeReqIdRef = useRef(0);
+
+  const [paymentInfo, setPaymentInfo] = useState<{
+    paymentMethod?: string;
+    paymentStatus?: "none"|"awaiting"|"paid"|"failed";
+    driverPayment?: { number?: string; qrUrl?: string|null };
+  } | null>(null);
+
+  const loadPaymentInfo = async (id: string) => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/booking/${id}/payment-info`);
+      const j = await r.json();
+      if (j?.ok) setPaymentInfo({
+        paymentMethod: j.paymentMethod,
+        paymentStatus: j.paymentStatus,
+        driverPayment: j.driverPayment || {},
+      });
+    } catch {}
+  };
+
+  const setPaymentStatus = async (id: string, status: "paid"|"failed") => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/booking/${id}/payment-status`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const j = await r.json();
+      if (j?.ok) setPaymentInfo((p)=> p ? { ...p, paymentStatus: status } : p);
+    } catch {}
+  };
+
   const fetchORSRoute = async (
     from: { latitude: number; longitude: number },
-    to: { latitude: number; longitude: number }
+    to:   { latitude: number; longitude: number },
+    reframe: boolean = false         // <-- NEW
   ) => {
+    const myReqId = ++routeReqIdRef.current;
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           start: [from.longitude, from.latitude],
-          end: [to.longitude, to.latitude],
+          end:   [to.longitude,   to.latitude],
         }),
       });
 
       const data = await res.json();
+      if (!res.ok || !data?.features?.[0]?.geometry?.coordinates) return;
+      if (myReqId !== routeReqIdRef.current) return; 
 
-      if (!res.ok || !data?.features?.[0]?.geometry?.coordinates) {
-        console.error("🛑 Invalid ORS response:", data);
-        Alert.alert("Route error", "Failed to get route from ORS.");
-        return;
-      }
+      const coords = data.features[0].geometry.coordinates; // [lng,lat]
+      const polylinePoints = coords.map(([lng, lat]: number[]) => [lat, lng]);
 
-      const coords = data.features[0].geometry.coordinates; 
-      const polylinePoints = coords.map(([lng, lat]: number[]) => [lat, lng]); 
-
-      const summary = data.features?.[0]?.properties?.summary || {};
-      const distanceM = summary.distance ?? 0;
-      const durationS = summary.duration ?? 0;
-
+      const summary    = data.features?.[0]?.properties?.summary || {};
+      const distanceM  = summary.distance ?? 0;
+      const durationS  = summary.duration ?? 0;
       const distanceKm = distanceM / 1000;
 
       const distanceText = `${distanceKm.toFixed(2)} km`;
-      const mins = Math.round(durationS / 60);
-      const durationText = mins >= 60
-        ? `${Math.floor(mins / 60)}h ${mins % 60}m`
-        : `${mins} min`;
+      const mins         = Math.round(durationS / 60);
+      const durationText = mins >= 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins} min`;
 
-      const computedFare = calculateFare(distanceKm, discount); // or 'none'
-      const fareText = `₱${computedFare} est`;
+      const computedFare = calculateFare(distanceKm, discount);
       setFare(computedFare);
 
       sendToMap({
         type: 'drawRoute',
         route: polylinePoints,
-        distanceKm, 
-        distanceText,     
+        distanceKm,
+        distanceText,
         durationText,
-        fareText,  
+        fareText: `₱${computedFare} est`,
+        reframe,                        
       });
-
-    } catch (err) {
-      console.error("❌ Failed to fetch ORS route:", err);
-      Alert.alert("Route error", "Could not fetch route.");
-    }
+    } catch {}
   };
+
+
 
   const onChangeQuery = (t: string) => {
     setQuery(t);
@@ -270,11 +425,11 @@ export default function PHome() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(async () => {
       if (!t || t.length < 3) { setHits([]); return; }
-      if (!location) { setHits([]); return; }
+      if (!pickup) { setHits([]); return; }
 
       try {
-        const lat = location.latitude;
-        const lng = location.longitude; // NOTE: lng
+        const lat = pickup.latitude;
+        const lng = pickup.longitude; 
         const url = `${API_BASE_URL}/api/places-search?q=${encodeURIComponent(t)}&lat=${lat}&lng=${lng}`;
         const r = await fetch(url);
         const data = await r.json();
@@ -299,22 +454,27 @@ export default function PHome() {
     setDropoffName(p.label);
 
     // ✅ make sure we actually have current location
-    if (!location) {
+    if (!pickup) {
       Alert.alert('Location unavailable', 'Waiting for GPS, please try again in a moment.');
       return;
     }
+    
 
     // draw route immediately
+    lastRouteFromRef.current = { lat: pickup.latitude, lng: pickup.longitude };
+    lastRouteToRef.current   = { lat: dest.latitude,     lng: dest.longitude };
+    lastRouteAtRef.current   = Date.now();
     fetchORSRoute(
-      { latitude: location.latitude, longitude: location.longitude },
-      dest
+      { latitude: pickup.latitude, longitude: pickup.longitude },
+      dest,
+      true
     );
 
-    // (optional) update markers
     sendToMap({
       type: 'setMarkers',
       destination: dest,
       driver: null,
+      pickup: pickup ? { latitude: pickup.latitude, longitude: pickup.longitude } : null,
     });
   };
 
@@ -338,6 +498,9 @@ export default function PHome() {
     })();
   }, []);
 
+  const destinationRef = useRef<typeof destination>(null);
+  useEffect(() => { destinationRef.current = destination; }, [destination]);
+
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
 
@@ -345,7 +508,7 @@ export default function PHome() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") return;
 
-      // fire once right away, so the dot appears even before watch ticks
+      // ✅ Seed blue marker from current GPS if we have it
       if (location && mapRef.current) {
         mapRef.current.postMessage(JSON.stringify({
           type: "updateUserLoc",
@@ -354,6 +517,7 @@ export default function PHome() {
           accuracy: 15,
           avatarUrl,
         }));
+        ensureUserMarker(location.latitude, location.longitude);
       }
 
       sub = await Location.watchPositionAsync(
@@ -363,19 +527,52 @@ export default function PHome() {
           distanceInterval: 5,
         },
         (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+
+          setLivePos({ latitude, longitude });
+          // 🔵 Always drive the blue marker from GPS
           sendToMap({
             type: "updateUserLoc",
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy ?? 15,
+            latitude,
+            longitude,
+            accuracy: accuracy ?? 15,
             avatarUrl,
           });
+
+          // 🧭 Keep route recalculation origin = pickup (NOT blue) when routing
+          const dest = destinationRef.current;
+          if (dest && pickup) {
+            const fromLL = { lat: pickup.latitude, lng: pickup.longitude };
+            const toLL   = { lat: dest.latitude,   lng: dest.longitude   };
+            const movedM = haversine(lastRouteFromRef.current ?? fromLL, fromLL);
+            const now = Date.now();
+            const shouldRecompute =
+              movedM >= ROUTE_MIN_MOVE_M ||
+              (now - lastRouteAtRef.current) >= ROUTE_MIN_INTERVAL;
+
+            if (shouldRecompute) {
+              fetchORSRoute(
+                { latitude: pickup.latitude, longitude: pickup.longitude },
+                dest,
+                false // no reframe on live updates
+              );
+              lastRouteFromRef.current = fromLL;
+              lastRouteToRef.current   = toLL;
+              lastRouteAtRef.current   = now;
+            }
+          }
+
+          if (accuracy && accuracy > 80) return;
         }
       );
     })();
 
     return () => sub?.remove();
-  }, [avatarUrl, mapHtml]); // reattach if HTML reloaded
+  }, [avatarUrl, location, pickup]);
+
+
+  
+
 
   useEffect(() => {
     let headSub: Location.LocationSubscription | null = null;
@@ -408,22 +605,32 @@ export default function PHome() {
 
   // Reverse geocode for pick-up location
   useEffect(() => {
-    if (location) {
-      Location.reverseGeocodeAsync({
-        latitude: location.latitude,
-        longitude: location.longitude,
-      }).then((results) => {
-        if (results && results.length > 0) {
-          const addr = results[0];
-          setPickupName(
-            `${addr.street || ""}${addr.street ? ", " : ""}${addr.city || addr.subregion || ""}`
-          );
-        } else {
-          setPickupName("Current Location");
-        }
-      }).catch(() => setPickupName("Current Location"));
-    }
-  }, [location]);
+  if (!pickup) return;
+    Location.reverseGeocodeAsync({
+      latitude: pickup.latitude, longitude: pickup.longitude
+    }).then((results) => {
+      if (results && results.length > 0) {
+        const a = results[0];
+        setPickupName(`${a.street || ""}${a.street ? ", " : ""}${a.city || a.subregion || ""}`);
+      } else {
+        setPickupName("Pinned pickup");
+      }
+    }).catch(() => setPickupName("Pinned pickup"));
+  }, [pickup]);
+
+  
+  useEffect(() => {
+    if (!mapReady) return;
+    const p = bookedFor && location ? location : (location || pickup);
+    if (p) ensureUserMarker(p.latitude, p.longitude);
+  }, [mapReady, mapHtml, location, pickup, bookedFor]);
+
+
+  useEffect(() => {
+    if (!livePos) return;
+    console.log("LIVE POS →", livePos.latitude, livePos.longitude);
+  }, [livePos]);
+
 
   // Handle Android hardware back button (logout prompt)
   // useEffect(() => {
@@ -467,7 +674,17 @@ export default function PHome() {
 
   // Generate map HTML when location changes
   useEffect(() => {
-  if (!location) return;
+  if (!location || mapHtml) return;
+
+  // lock the very first location for the initial setView
+  if (!initialLocRef.current) {
+    initialLocRef.current = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+    };
+  }
+
+  const { latitude: initLat, longitude: initLng } = initialLocRef.current;
   const iconJson = JSON.stringify(iconData || {});
 
   const html = String.raw`
@@ -490,6 +707,9 @@ export default function PHome() {
       <div id="map"></div>
       <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
       <script>
+        if (!window.L) {
+          window.ReactNativeWebView?.postMessage(JSON.stringify({ type:'error', msg:'Leaflet failed to load' }));
+        }
         // --- Map init ---
         const map = L.map('map', {
           zoomControl: true,
@@ -498,11 +718,12 @@ export default function PHome() {
           minZoom: 13,
           maxZoom: 19, 
           noWrap: true
-        }).setView([${location.latitude}, ${location.longitude}], 15);
+        }).setView([${initLat}, ${initLng}], 15);
 
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-          maxZoom:19, attribution:'© OpenStreetMap contributors'
+        L.tileLayer('https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=7yQg8w68otDEssrPk9wU', {
+          maxZoom: 19,
+          attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | © <a href="https://www.maptiler.com/">MapTiler</a>'
         }).addTo(map);
 
         // --- State ---
@@ -517,6 +738,40 @@ export default function PHome() {
         let poiLayer = L.layerGroup().addTo(map);
         let landmarkLayer = L.layerGroup().addTo(map);
         let currentZoomLevel = map.getZoom();    // track last zoom to know in/out
+        let userMarkerPlaced = false; // <— NEW
+        let pickupMarker = null;
+
+        let tweenHandle = null;
+        function tweenMarkerTo(lat, lng, durationMs = 300) {
+          if (!userMarker) return upsertUserMarker(lat, lng);
+          if (tweenHandle) cancelAnimationFrame(tweenHandle);
+
+          const start = userMarker.getLatLng();
+          const end = L.latLng(lat, lng);
+          const t0 = performance.now();
+
+          const step = (t) => {
+            const p = Math.min(1, (t - t0) / durationMs);
+            const latI = start.lat + (end.lat - start.lat) * p;
+            const lngI = start.lng + (end.lng - start.lng) * p;
+            userMarker.setLatLng([latI, lngI]);
+            if (p < 1) tweenHandle = requestAnimationFrame(step);
+          };
+          tweenHandle = requestAnimationFrame(step);
+        }
+
+        function upsertUserMarker(lat, lng){
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+          if (!userMarker){
+            userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 })
+              .addTo(map)
+              .bindTooltip({ permanent:true, direction:"top" });
+          } else {
+            userMarker.setLatLng([lat,lng]);
+          }
+          userMarkerPlaced = true; 
+        }
+
         function bboxContains(b, lat, lng) {
           return lng >= b.minLng && lng <= b.maxLng && lat >= b.minLat && lat <= b.maxLat;
         }
@@ -586,6 +841,13 @@ export default function PHome() {
           iconAnchor: [15, 30], // bottom center
         });
 
+        const pickupIcon = L.icon({
+          iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/red-dot.png',
+          iconSize: [30,30],
+          iconAnchor: [15,30],
+        });
+
+
         const destIcon = L.icon({
           iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png',
           iconSize: [30, 30],
@@ -598,24 +860,20 @@ export default function PHome() {
           iconAnchor: [20, 40],
         });
 
-        // --- Helpers ---
-        function upsertUserMarker(lat, lng){
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-          if (!userMarker){
-            userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 })
-              .addTo(map)
-              .bindTooltip( { permanent:true, direction:"top" });
-          } else {
-            userMarker.setLatLng([lat,lng]);
-          }
-        }
-
         function setDestination(lat, lng){
           if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
           destMarker = L.marker([lat,lng], { icon: destIcon })
             .addTo(map)
             .bindTooltip("Destination", { permanent:true, direction:"top" });
         }
+
+        function setPickup(lat, lng){
+          if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
+          pickupMarker = L.marker([lat,lng], { icon: pickupIcon })
+            .addTo(map)
+            .bindTooltip({ permanent:true, direction:"top" });
+        }
+
 
         function setDriver(lat, lng){
           if (driverMarker) { map.removeLayer(driverMarker); driverMarker = null; }
@@ -674,30 +932,92 @@ export default function PHome() {
           let msg = {};
           try { msg = JSON.parse(event.data || '{}'); } catch(e){ return; }
 
-          // Live passenger location (blue marker only)
-          if (msg.type === 'updateUserLoc'){
-            upsertUserMarker(msg.latitude, msg.longitude);
+          if (msg.type === 'ensureUserMarker') {
+            const lat = Number(msg.latitude);
+            const lng = Number(msg.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              upsertUserMarker(lat, lng);
+            }
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'userMarkerEnsured',
+              placed: !!userMarker,
+            }));
             return;
           }
 
+          // Live passenger location (blue marker only)
+          if (msg.type === 'updateUserLoc'){
+            const lat = Number(msg.latitude), lng = Number(msg.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) tweenMarkerTo(lat, lng, 300);
+            return;
+          }
+
+          if (msg.type === 'setPickup') {
+            const lat = Number(msg.latitude), lng = Number(msg.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) setPickup(lat, lng);
+            return;
+          }
+          if (msg.type === 'clearPickup') {
+            if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
+            return;
+          }
+
+
+          // Keep route line's head glued to the moving CL marker
+          if (msg.type === 'nudgeRouteStart') {
+            const lat = Number(msg.latitude), lng = Number(msg.longitude);
+
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'dbg',
+              tag: 'nudgeRouteStart',
+              note: 'received nudge'
+            }));
+
+            if (!routeLine || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+            let pts = routeLine.getLatLngs();
+            if (!Array.isArray(pts) || !pts.length) return;
+            if (Array.isArray(pts[0]) && pts[0].length) { pts = pts[0]; }
+
+            pts[0] = L.latLng(lat, lng);
+            routeLine.setLatLngs(pts);
+
+            if (pts.length > 1) {
+              const p1 = pts[0], p2 = pts[1];
+              const mid = L.latLng(
+                p1.lat + (p2.lat - p1.lat) * 0.15,
+                p1.lng + (p2.lng - p1.lng) * 0.15
+              );
+              routeLine.setLatLngs([p1, mid, ...pts.slice(1)]);
+            }
+
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'nudgeAck', ok: true }));
+            return;
+          }
+
+
+            
           // Heading intentionally ignored (no cone)
           if (msg.type === 'updateHeading'){ return; }
 
           // Draw route with label (distance • duration • fare)
-          if (msg.type === 'drawRoute' && Array.isArray(msg.route) && msg.route.length){
+          if (msg.type === 'drawRoute' && Array.isArray(msg.route) && msg.route.length) {
             clearRoute();
-
             routeLine = L.polyline(msg.route, { weight:4, color:'#1a73e8' }).addTo(map);
-            map.fitBounds(routeLine.getBounds(), { padding:[50,50] });
+
+            if (msg.reframe) {
+              map.fitBounds(routeLine.getBounds(), { padding:[50,50] });
+            }
 
             const mid = msg.route[Math.floor(msg.route.length/2)];
-            const label = [msg.distanceText, msg.durationText, msg.fareText].filter(Boolean).join(' • ');
-            distanceTooltip = L.tooltip({ permanent:true, direction:'top', offset:[0,-6], className:'distance-label' })
-              .setContent(label || '')
-              .setLatLng(mid)
-              .addTo(map);
+            const label = [msg.distanceText, msg.durationText, msg.fareText]
+              .filter(Boolean).join(' • ');
+            distanceTooltip = L.tooltip({
+              permanent:true, direction:'top', offset:[0,-6], className:'distance-label'
+            }).setContent(label || '').setLatLng(mid).addTo(map);
             return;
           }
+
 
           // Clear route
           if (msg.type === 'clearRoute'){
@@ -714,6 +1034,12 @@ export default function PHome() {
               setDestination(msg.destination.latitude, msg.destination.longitude);
             } else if (destMarker){
               map.removeLayer(destMarker); destMarker = null;
+            }
+
+            if (msg.pickup && Number.isFinite(msg.pickup.latitude) && Number.isFinite(msg.pickup.longitude)){
+              setPickup(msg.pickup.latitude, msg.pickup.longitude);
+            } else if (pickupMarker){
+              map.removeLayer(pickupMarker); pickupMarker = null;
             }
 
             // driver
@@ -893,12 +1219,14 @@ export default function PHome() {
   </html>
   `;
   setMapHtml(html);
-  }, [location, iconData]);
+  }, [mapHtml, location]);  
 
 
 
   useEffect(() => {
     if (!mapRef.current || !location) return;
+
+    // 🔵 Update passenger marker live
     mapRef.current.postMessage(JSON.stringify({
       type: "updateUserLoc",
       latitude: location.latitude,
@@ -906,14 +1234,86 @@ export default function PHome() {
       accuracy: 15,
       avatarUrl,
     }));
-  }, [mapHtml, location, avatarUrl]);
 
+    // 🧭 Recompute route occasionally (no zoom)
+    const now = Date.now();
+    if (destination && pickup) {
+      const fromLL = { lat: pickup.latitude, lng: pickup.longitude };
+      const toLL   = { lat: destination.latitude, lng: destination.longitude };
+
+      const movedM = haversine(
+        lastRouteFromRef.current ?? fromLL,
+        fromLL
+      );
+
+      const shouldRecompute =
+        movedM >= ROUTE_MIN_MOVE_M ||
+        (now - lastRouteAtRef.current) >= ROUTE_MIN_INTERVAL;
+
+      if (shouldRecompute) {
+        fetchORSRoute(
+          { latitude: pickup.latitude, longitude: pickup.longitude },
+          destination,
+          false // ⚠️ never reframe on live updates
+        );
+        lastRouteFromRef.current = fromLL;
+        lastRouteToRef.current   = toLL;
+        lastRouteAtRef.current   = now;
+      }
+    }
+  }, [location, pickup, avatarUrl, destination]);
+
+
+  useEffect(() => {
+    if (!initialLocRef.current && pickup) {
+      initialLocRef.current = { latitude: pickup.latitude, longitude: pickup.longitude };
+    }
+  }, [pickup]);
+
+  useEffect(() => {
+    console.log("[PHome] HTML built once?", !!mapHtml);
+  }, [mapHtml]);
+
+  useEffect(() => {
+    console.log('[PHome] guards:',
+      'hasLocation=', !!location,
+      'haspickup=', !!pickup,
+      'hasIconData=', !!iconData,
+      'hasMapHtml=', !!mapHtml
+    );
+  }, [location, pickup, iconData, mapHtml]);
+
+  useEffect(() => {
+    if (!destination || !pickup || !routeFramedRef.current) return;
+
+    const now = { lat: pickup.latitude, lng: pickup.longitude };
+    const moved = lastOriginRef.current ? haversine(lastOriginRef.current, now) : Infinity;
+
+    if (moved > 150) {                 // tweak threshold as you like
+      fetchORSRoute(pickup, destination, false); 
+      lastOriginRef.current = now;
+    }
+  }, [pickup, destination]);
+
+  useEffect(() => {
+    if (!pickup) return;
+    sendToMap({ type: 'setPickup', latitude: pickup.latitude, longitude: pickup.longitude });
+  }, [pickup]);
 
   // Reverse geocode for drop-off location
   const handleMapMessage = async (event: any) => {
     try {
       const parsed = JSON.parse(event.nativeEvent.data);
-      // Always see what's coming in:
+
+      // ✅ PRIORITY: pickup selection
+      if (selectingPickup && parsed.latitude && parsed.longitude) {
+        setPickup({ latitude: parsed.latitude, longitude: parsed.longitude });
+        setSelectingPickup(false);
+        sendToMap({ type: 'setPickup', latitude: parsed.latitude, longitude: parsed.longitude });
+        return; // <-- don't also set destination
+      }
+
+      // Destination clicks (normal map tap)
       if (parsed.latitude && parsed.longitude) {
         setDestination(parsed);
         try {
@@ -921,14 +1321,34 @@ export default function PHome() {
             latitude: parsed.latitude, longitude: parsed.longitude,
           });
           if (results && results.length > 0) {
-            const addr = results[0];
-            setDropoffName(`${addr.street || ""}${addr.street ? ", " : ""}${addr.city || addr.subregion || ""}`);
+            const a = results[0];
+            setDropoffName(`${a.street || ""}${a.street ? ", " : ""}${a.city || a.subregion || ""}`);
           } else {
             setDropoffName("Selected Location");
           }
         } catch {
           setDropoffName("Selected Location");
         }
+      }
+
+      if (selectingPickup && parsed.latitude && parsed.longitude) {
+        setPickup({ latitude: parsed.latitude, longitude: parsed.longitude });
+        setSelectingPickup(false);
+        sendToMap({ type: 'setPickup', latitude: parsed.latitude, longitude: parsed.longitude });
+        return;
+      }
+
+      if (parsed.type === 'dbg' && parsed.tag === 'nudgeRouteStart') {
+        console.log('[MAP] nudge dbg:', parsed);
+        return;
+      }
+      if (parsed.type === 'nudgeAck') {
+        console.log('[MAP] nudgeAck ok=', parsed.ok);
+        return;
+      }
+      if (parsed.type === 'userMarkerEnsured') {
+        userMarkerOkRef.current = !!parsed.placed;
+        return;
       }
       if (parsed.type === 'bbox' && parsed.bbox) {
         const { minLng, minLat, maxLng, maxLat } = parsed.bbox;
@@ -1035,14 +1455,18 @@ export default function PHome() {
         setDestination(dest);
         setDropoffName(parsed.label || 'POI Destination');
 
-        if (!location) {
+        if (!pickup) {
           Alert.alert('Location unavailable', 'Waiting for GPS, please try again in a moment.');
           return;
         }
-        const { latitude, longitude } = location;
+        const { latitude, longitude } = pickup;
+
+        lastRouteFromRef.current = { lat: pickup.latitude, lng: pickup.longitude };
+        lastRouteToRef.current   = { lat: dest.latitude,     lng: dest.longitude };
+        lastRouteAtRef.current   = Date.now();
 
         fetchORSRoute(
-          { latitude: location.latitude, longitude: location.longitude },
+          { latitude: pickup.latitude, longitude: pickup.longitude },
           dest
         );
         sendToMap({
@@ -1055,16 +1479,56 @@ export default function PHome() {
     } catch {}
   };
 
-  const handleBookNow = async () => {
-    if (!location || !destination) {
-      Alert.alert("Missing location info");
-      return;
+    // Set markers & trigger route drawing when destination is picked
+  // useEffect(() => {
+  //   if (!mapRef.current || bookingConfirmed) return;
+
+  //   const driverCoords = matchedDriver?.location
+  //     ? { latitude: matchedDriver.location.latitude, longitude: matchedDriver.location.longitude }
+  //     : null;
+
+  //   if (driverCoords && destination) {
+  //     mapRef.current.postMessage(JSON.stringify({ type: "setMarkers", destination, driver: driverCoords }));
+  //   }
+
+  //   // 👉 draw route as soon as we have both ends
+  //   if (destination && location) {
+  //     fetchORSRoute(location, destination);
+  //   }
+  // }, [destination, matchedDriver, bookingConfirmed, location]);
+
+  const loadLandmarks = async () => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/landmarks`);
+      const items = await r.json();
+      sendToMap({ type: 'setLandmarks', items: Array.isArray(items) ? items : [] });
+    } catch {
+      sendToMap({ type: 'setLandmarks', items: [] });
     }
+  };
+
+  useEffect(() => {
+    if (!pickup) return;
+    sendToMap({ type: 'setPickup', latitude: pickup.latitude, longitude: pickup.longitude });
+  }, [pickup]);
+
+
+
+  const gate = loading || !pickup;
+
+  const handleBookNow = async () => {
+    if (!pickup || !destination) { Alert.alert("Missing location info"); return; }
     if (!passengerId) {
       Alert.alert("Not logged in", "Please log in again.");
       router.replace("/login_and_reg/plogin");
       return;
     }
+
+    if (bookedFor && !riderName.trim()) {
+      Alert.alert("Missing info", "Please enter the rider’s name.");
+      return;
+    }
+
 
     // Normalize party size based on type
     const normalizedParty =
@@ -1077,19 +1541,24 @@ export default function PHome() {
     setTripCompleted(false);
 
     const bookingData = {
-      pickupLat: location.latitude,
-      pickupLng: location.longitude,
+      pickupLat: pickup.latitude,
+      pickupLng: pickup.longitude,
       destinationLat: destination.latitude,
       destinationLng: destination.longitude,
       fare,
       paymentMethod,
       notes,
       passengerId,
-
-      // NEW: booking type + group seats
+      pickupPlace: pickupName,
+      bookedFor,
+      riderName: bookedFor ? riderName.trim() : "",
+      riderPhone: bookedFor ? riderPhone.trim() : "",
+      destinationPlace: dropoffName,
       bookingType,
       partySize: normalizedParty,
+
     };
+    console.log(bookingData);
 
     try {
       // reset any old polling
@@ -1133,24 +1602,6 @@ export default function PHome() {
   
   
 
-  // Set markers & trigger route drawing when destination is picked
-  useEffect(() => {
-    if (!mapRef.current || bookingConfirmed) return;
-
-    const driverCoords = matchedDriver?.location
-      ? { latitude: matchedDriver.location.latitude, longitude: matchedDriver.location.longitude }
-      : null;
-
-    if (driverCoords && destination) {
-      mapRef.current.postMessage(JSON.stringify({ type: "setMarkers", destination, driver: driverCoords }));
-    }
-
-    // 👉 draw route as soon as we have both ends
-    if (destination && location) {
-      fetchORSRoute(location, destination);
-    }
-  }, [destination, matchedDriver, bookingConfirmed, location]);
-
   useEffect(() => {
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOffset(-35));
     const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOffset(0));
@@ -1182,7 +1633,7 @@ export default function PHome() {
           setBookingConfirmed(true);
           setSearching(false);
           Alert.alert("Driver Accepted!", "The driver has accepted your ride and is on the way!");
-
+          if (bookingId) loadPaymentInfo(String(bookingId));
           if (myBooking.driverId) {
             try {
               const [driverRes, statusRes] = await Promise.all([
@@ -1210,6 +1661,13 @@ export default function PHome() {
     interval = setInterval(pollForDriverMatch, 4000);
     return () => clearInterval(interval);
   }, [bookingId, bookingConfirmed]);
+
+  useEffect(() => {
+    if (!bookingId || !bookingConfirmed) return;
+    const t = setInterval(() => loadPaymentInfo(String(bookingId)), 5000);
+    return () => clearInterval(t);
+  }, [bookingId, bookingConfirmed]);
+
 
   useEffect(() => {
     let interval: any;
@@ -1250,6 +1708,7 @@ export default function PHome() {
           // clear map
           sendToMap({ type: "setMarkers", destination: null, driver: null });
           sendToMap({ type: "clearRoute" });
+          sendToMap({ type: 'clearPickup' });
 
           setFare(0);
         }
@@ -1321,6 +1780,7 @@ export default function PHome() {
       // Clear map + cached state
       sendToMap({ type: "setMarkers", destination: null, driver: null });
       sendToMap({ type: "clearRoute" });
+      sendToMap({ type: 'clearPickup' });
       await AsyncStorage.removeItem("phomeBookingState");
       setFare(0);
     } catch (e) {
@@ -1400,18 +1860,38 @@ export default function PHome() {
     }
   };
 
-  const loadLandmarks = async () => {
-    try {
-      const r = await fetch(`${API_BASE_URL}/api/landmarks`);
-      const items = await r.json();
-      sendToMap({ type: 'setLandmarks', items: Array.isArray(items) ? items : [] });
-    } catch {
-      sendToMap({ type: 'setLandmarks', items: [] });
+  const buildImageUri = (raw?: string, updatedAt?: string | number) => {
+    if (!raw) return null;
+
+    // If it's already an absolute URL (Cloudinary, etc.)
+    if (/^https?:\/\//i.test(raw)) {
+      const v = encodeURIComponent(String(updatedAt ?? Date.now()));
+      return `${raw}${raw.includes("?") ? "&" : "?"}v=${v}`;
     }
+
+    // Else treat as relative path served by your backend
+    const base = API_BASE_URL.replace(/\/$/, "");
+    const path = String(raw).replace(/^\//, ""); // strip leading slash if any
+    const v = encodeURIComponent(String(updatedAt ?? Date.now()));
+    return `${base}/${path}?v=${v}`;
   };
 
+  const driverSelfieUri = React.useMemo(() => {
+    if (!matchedDriver?.selfieImage) return null;
 
-  if (loading || !location) return null;
+    // Use a stable version key if you have one; NEVER Date.now()
+    const ver =
+      (matchedDriver as any)?.updatedAt ||
+      (matchedDriver as any)?.selfieUpdatedAt ||
+      matchedDriver?.driverId || // last resort: driverId keeps it stable
+      1;
+
+    return buildImageUri(matchedDriver.selfieImage, ver);
+  }, [matchedDriver?.selfieImage, (matchedDriver as any)?.updatedAt, matchedDriver?.driverId]);
+
+
+
+    
 
   return (
     <KeyboardAvoidingView style={{ flex: 1}} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={keyboardOffset}>
@@ -1426,8 +1906,10 @@ export default function PHome() {
               originWhitelist={["*"]}
               source={{ html: mapHtml }}
               javaScriptEnabled
+              allowFileAccess
               onLoadEnd={() => setMapReady(true)}
               style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: -30, zIndex: 0 }}
+              mixedContentMode="always"
               onMessage={handleMapMessage}
               nestedScrollEnabled
             />
@@ -1435,28 +1917,53 @@ export default function PHome() {
 
           <View style={styles.searchcont}>
             {/* Destination search */}
-            <View style={styles.searchWrap}>
-              <TextInput
-                value={query}
-                onChangeText={onChangeQuery}
-                placeholder="Search destination (e.g., SM Lucena)"
-                placeholderTextColor="#777"
-                style={styles.searchInput}
-              />
-              {hits.length > 0 && (
-                <View style={styles.searchResults}>
-                  {hits.map((h, i) => (
-                    <TouchableOpacity
-                      key={`${h.lat},${h.lng}-${i}`}
-                      onPress={() => choosePlace(h)}
-                      style={styles.searchItem}
-                    >
-                      <Text style={styles.searchItemText}>{h.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </View>
+            <View style={[styles.searchWrap, { position: "relative" }]}>
+            <TextInput
+              value={query}
+              onChangeText={onChangeQuery}
+              placeholder="Search destination (e.g., SM Lucena)"
+              placeholderTextColor="#777"
+              style={[styles.searchInput, { paddingRight: 35 }]}
+            />
+
+            {query.length > 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  setQuery("");
+                  setHits([]);
+                  setDestination(null);
+                  setDropoffName("");
+                  sendToMap({ type: "clearRoute" });
+                  sendToMap({ type: "setMarkers", destination: null, driver: null });
+                }}
+                style={{
+                  position: "absolute",
+                  right: 7,
+                  top: 6,
+                  zIndex: 9999,
+                  padding: 4,
+                }}
+              >
+                <Ionicons name="close-circle" size={20} color="#999" />
+              </TouchableOpacity>
+            )}
+
+            {/* Results dropdown */}
+            {hits.length > 0 && (
+              <View style={styles.searchResults}>
+                {hits.map((h, i) => (
+                  <TouchableOpacity
+                    key={`${h.lat},${h.lng}-${i}`}
+                    onPress={() => choosePlace(h)}
+                    style={styles.searchItem}
+                  >
+                    <Text style={styles.searchItemText}>{h.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
             <TouchableOpacity
               onPress={() => {
                 if (showLandmarks) {
@@ -1478,7 +1985,7 @@ export default function PHome() {
             >
               <Text>{showLandmarks ? 'Hide Landmarks' : 'Explore Landmarks'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
+            {/* <TouchableOpacity
               onPress={() => {
                 if (showPOIs) {
                   setShowPOIs(false);
@@ -1521,7 +2028,62 @@ export default function PHome() {
               }}
             >
               <Text>{showPOIs ? 'Hide Places' : 'Show Places'}</Text>
+            </TouchableOpacity> */}
+
+            <TouchableOpacity
+              onPress={() => {
+                const next = !bookedFor;
+                setBookedFor(next);
+
+                if (next) {
+                  // Turning ON: choose someone else's pickup
+                  setSelectingPickup(true);
+                  Alert.alert("Book for someone else", "Tap the map to set the OTHER person's pickup.");
+                  return;
+                }
+
+                // Turning OFF: full cleanup (like a soft refresh)
+                setSelectingPickup(false);
+
+                // Clear UI state
+                setDestination(null);
+                setDropoffName("");
+                setFare(0);
+
+                // Reset route trackers
+                lastRouteDestKeyRef.current = null;
+                lastRouteFromRef.current = null;
+                lastRouteToRef.current   = null;
+                lastRouteAtRef.current   = 0;
+                routeFramedRef.current   = false;
+
+                // Clear map markers & route
+                sendToMap({ type: "setMarkers", destination: null, driver: null, pickup: null });
+                sendToMap({ type: "clearRoute" });
+                sendToMap({ type: "clearPickup" });
+
+                // Re-seed pickup to current GPS so booking uses BLUE marker
+                if (location) {
+                  const { latitude, longitude } = location;
+                  setPickup({ latitude, longitude });
+                  sendToMap({ type: "setPickup", latitude, longitude });
+                }
+              }}
+              style={{
+                alignSelf: 'center',
+                marginTop: 6,
+                backgroundColor: bookedFor ? '#111' : '#eee',
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 8
+              }}
+            >
+              <Text style={{ color: bookedFor ? '#fff' : '#111', fontWeight: '600' }}>
+                {bookedFor ? 'For Someone Else: ON' : 'Book for someone else'}
+              </Text>
             </TouchableOpacity>
+
+
 
 
           </View>
@@ -1543,6 +2105,8 @@ export default function PHome() {
                 </View>
               )}
 
+              
+
               {matchedDriver && (
                 <View
                   style={{
@@ -1557,64 +2121,50 @@ export default function PHome() {
                     elevation: 3,
                   }}
                 >
-                  {infoBoxMinimized ? (
-                    <TouchableOpacity style={{ alignItems: "center", padding: 10 }} onPress={() => setInfoBoxMinimized(false)}>
-                      <Text style={{ fontWeight: "bold", color: "#000" }}>View Driver Info</Text>
-                    </TouchableOpacity>
-                  ) : (
+                  {!infoBoxMinimized ? (
                     <>
                       <View style={{ flexDirection: "row", alignItems: "center" }}>
-                        {matchedDriver.selfieImage && (
+                        {driverSelfieUri ? (
                           <Image
-                            source={{ uri: `${API_BASE_URL}/${matchedDriver.selfieImage}` }}
-                            style={{
-                              width: 50,
-                              height: 50,
-                              borderRadius: 25,
-                              marginRight: 10,
-                            }}
+                            source={{ uri: driverSelfieUri }}
+                            style={{ width: 80, height: 80, borderRadius: 50, marginRight: 10 }}
+                            resizeMode="cover"
                           />
-                        )}
+                        ) : null}
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: "bold", color: "#000" }}>✅ Driver Found!</Text>
-                          <Text>Name: {matchedDriver.driverName}</Text>
-                          <Text>Franchise #: {matchedDriver.franchiseNumber || "N/A"}</Text>
-                          <Text>Experience: {matchedDriver.experienceYears || "N/A"} years</Text>
+                          <Text>Name: {matchedDriver?.driverName}</Text>
+                          <Text>Franchise No.: {matchedDriver?.franchiseNumber || "N/A"}</Text>
+                          <Text>Experience: {matchedDriver?.experienceYears || "N/A"} years</Text>
 
-                          {/* Chat button here */}
-                          <TouchableOpacity
+                          
+                        </View>
+                      </View>
+
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10, gap: 10 }}>
+                        <TouchableOpacity onPress={() => setInfoBoxMinimized(true)} style={{ backgroundColor: "#81C3E1", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
+                          <Text style={{ color: "white" }}>Minimize</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
                             onPress={() => {
                               router.push({
                                 pathname: "/ChatRoom",
                                 params: {
-                                  bookingId: bookingId,
+                                  bookingId,
                                   driverId: matchedDriver?.driverId,
-                                  passengerId: passengerId,
+                                  passengerId,
                                   role: "passenger",
                                 },
                               });
                             }}
-                            style={{
-                              marginTop: 8,
-                              backgroundColor: "#007bff",
-                              paddingVertical: 8,
-                              paddingHorizontal: 16,
-                              borderRadius: 8,
-                              alignSelf: "flex-start",
-                            }}
+                            style={{ backgroundColor: "#007bff", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}
                           >
-                            <Text style={{ color: "#fff", fontWeight: "bold" }}>💬 Chat</Text>
+                            <Text style={{ color: "#fff", fontWeight: "bold" }}>Chat</Text>
                           </TouchableOpacity>
-                        </View>
-                      </View>
 
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>
-                        <TouchableOpacity onPress={() => setInfoBoxMinimized(true)} style={{ backgroundColor: "#81C3E1", borderRadius: 5, padding: 5 }}>
-                          <Text style={{ color: "white" }}>Minimize</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity onPress={() => setShowReportModal(true)} style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5 }}>
-                          <Text style={{ color: "white" }}>Report Driver</Text>
+                        <TouchableOpacity onPress={() => setShowReportModal(true)} style={{ backgroundColor: "#f44336", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
+                          <Text style={{ color: "white" }}>Report</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -1641,12 +2191,57 @@ export default function PHome() {
                             setFare(0);
                             if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
                           }}
-                          style={{ backgroundColor: "#f44336", borderRadius: 5, padding: 5 }}
+                          style={{ backgroundColor: "#f44336", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}
                         >
-                          <Text style={{ color: "white" }}>Cancel Ride</Text>
+                          <Text style={{ color: "white" }}>Cancel</Text>
                         </TouchableOpacity>
                       </View>
+                      {paymentInfo?.paymentMethod?.toLowerCase() === "gcash" && paymentInfo?.driverPayment?.number &&(
+                        <View style={{paddingTop:5}}>
+                          <View style={{flexDirection:"row", justifyContent:"space-between"}}>
+                            <Text style={{ fontWeight: "700", marginBottom: 6 }}>GCash Payment</Text>
+                            <Text>
+                              Status:{" "}
+                              <Text style={{ fontWeight: "700" }}>
+                                {paymentInfo?.paymentStatus || "none"}
+                              </Text>
+                            </Text>
+                          </View>
+                          <View style={{flexDirection: "row", justifyContent: "space-between"}}>
+                            <TouchableOpacity onPress={handleCopy}>
+                              <Text>
+                                Number:{' '}
+                                <Text style={{ fontWeight: '600' }}>
+                                  {paymentInfo.driverPayment?.number}
+                                </Text>
+                              </Text>
+                              <Text style={{ fontSize: 12, color: copied ? '#81C3E1' : '#666' }}>
+                                {copied ? '✔ Copied to clipboard' : 'Tap to copy'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() =>
+                                bookingId && setPaymentStatus(String(bookingId), "paid")
+                              }
+                              disabled={paymentInfo?.paymentStatus === "paid"}
+                              style={{
+                                backgroundColor:
+                                  paymentInfo?.paymentStatus === "paid" ? "#9e9e9e" : "#2e7d32", 
+                                alignItems: "center", justifyContent: "center", borderRadius: 5, padding: 5
+                              }}
+                            >
+                              <Text style={{ color: "#fff", fontWeight: "700" }}>
+                                {paymentInfo?.paymentStatus === "paid" ? "Paid" : "Mark Paid"}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
                     </>
+                  ) : (
+                    <TouchableOpacity style={{ alignItems: "center", padding: 10 }} onPress={() => setInfoBoxMinimized(false)}>
+                      <Text style={{ fontWeight: "bold", color: "#000" }}>View Driver Info</Text>
+                    </TouchableOpacity>
                   )}
                 </View>
               )}
@@ -1654,7 +2249,16 @@ export default function PHome() {
 
             {showBookingForm && (
               <View style={styles.panel}>
-                <Text style={styles.panelTitle}>Booking Details</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.panelTitle}>Booking Details</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowBookingForm(false)}
+                    style={{ padding: 4 }}
+                  >
+                    <Text style={{ alignContent: "center", fontSize: 22, fontWeight: 'bold', transform: [{ rotate: '180deg' }] }}><Ionicons name="close-circle" size={25} color="#999" /></Text>
+                  </TouchableOpacity>
+                </View>
+
 
                 {/* Booking Type Selector */}
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
@@ -1727,15 +2331,108 @@ export default function PHome() {
                   <Text>From:</Text>
                   <TextInput style={styles.input} placeholder="Saan ang pick-up?" value={pickupName} editable />
                   <Text>To:</Text>
-                  <TextInput style={styles.input} placeholder="Saan ang drop-off?" value={dropoffName} editable />
+                  <View style={{ position: "relative", zIndex: 999 }}>
+                    <TextInput
+                      value={dropoffName}   // 👈 keep the original behavior
+                      onChangeText={(text) => {
+                        setDropoffName(text); // what the user sees
+                        onChangeQuery(text);  // drives search & suggestions
+                      }}
+                      placeholder="Saan ang drop-off?"
+                      placeholderTextColor="#777"
+                      style={[styles.input, { paddingRight: 35 }]} // space for X
+                    />
+
+                    {/* ❌ Clear button */}
+                    {dropoffName.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDropoffName("");
+                          setQuery("");
+                          setHits([]);
+                          setDestination(null);
+                          sendToMap({ type: "clearRoute" });
+                          sendToMap({ type: "setMarkers", destination: null, driver: null });
+                        }}
+                        style={{
+                          position: "absolute",
+                          right: 10,
+                          top: 12,
+                          padding: 4,
+                          zIndex: 9999,
+                        }}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#999" />
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Suggestions (reusing the same hits + choosePlace) */}
+                    {hits.length > 0 && (
+                      <View style={[styles.searchResults, { width: "100%" }]}>
+                        {hits.map((h, i) => (
+                          <TouchableOpacity
+                            key={`${h.lat},${h.lng}-${i}`}
+                            onPress={() => choosePlace(h)}
+                            style={styles.searchItem}
+                          >
+                            <Text style={styles.searchItemText}>{h.label}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+
+
+                  {bookedFor && (
+                    <>
+                      <Text>Rider’s Name (who will ride):</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Juan Dela Cruz"
+                        value={riderName}
+                        onChangeText={setRiderName}
+                      />
+                      <Text>Rider’s Phone (optional):</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="09xx xxx xxxx"
+                        keyboardType="phone-pad"
+                        value={riderPhone}
+                        onChangeText={setRiderPhone}
+                      />
+                    </>
+                  )}
+
                   {/* <TextInput
                     style={styles.input}
                     placeholder="Name this location (optional: Home, Work, etc.)"
                     value={destinationLabel}
                     onChangeText={setDestinationLabel}
                   /> */}
-                  <TextInput style={styles.input} placeholder="Notes sa driver" value={notes} onChangeText={setNotes} />
-                  <TextInput style={styles.input} placeholder="Paano ka magbabayad?" value={paymentMethod} onChangeText={setPaymentMethod} />
+                  <TextInput style={styles.input} placeholder="Notes sa driver" placeholderTextColor="#A0A0A0" value={notes} onChangeText={setNotes} />
+                  <Text>Paano ka magbabayad?</Text>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => setPaymentMethod("Cash")}
+                      style={[
+                        styles.paymentOption,
+                        paymentMethod === "Cash" && styles.paymentSelected
+                      ]}
+                    >
+                      <Text style={paymentMethod === "Cash" ? styles.paymentSelectedText : styles.paymentText}>Cash</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setPaymentMethod("GCash")}
+                      style={[
+                        styles.paymentOption,
+                        paymentMethod === "GCash" && styles.paymentSelected
+                      ]}
+                    >
+                      <Text style={paymentMethod === "GCash" ? styles.paymentSelectedText : styles.paymentText}>GCash</Text>
+                    </TouchableOpacity>
+                  </View>
+
                 </ScrollView>
 
                 <View style={styles.fareContainer}>
@@ -1793,7 +2490,7 @@ export default function PHome() {
                     ))}
                   </View>
 
-                  <TextInput style={styles.feedbackInput} placeholder="Leave a comment (optional)" multiline numberOfLines={3} onChangeText={setNotes} value={notes} />
+                  <TextInput style={styles.feedbackInput} placeholder="Leave a comment (optional)" placeholderTextColor="#A0A0A0" multiline numberOfLines={3} onChangeText={setNotes} value={notes} />
 
                   <TouchableOpacity style={styles.submitButton} onPress={submitDriverRating}>
                     <Text style={styles.submitButtonText}>Submit</Text>
@@ -1830,7 +2527,7 @@ export default function PHome() {
                   </View>
 
                   {reportType === "Other" && (
-                    <TextInput style={styles.feedbackInput} placeholder="Describe the issue" multiline numberOfLines={3} value={otherReport} onChangeText={setOtherReport} />
+                    <TextInput style={styles.feedbackInput} placeholder="Describe the issue" placeholderTextColor="#A0A0A0" multiline numberOfLines={3} value={otherReport} onChangeText={setOtherReport} />
                   )}
 
                   <TouchableOpacity style={[styles.submitButton, { backgroundColor: "#4CAF50" }]} onPress={submitReport}>
@@ -1839,6 +2536,9 @@ export default function PHome() {
                 </View>
               </View>
             )}
+
+
+            
           </View>
         </View>
       </TouchableWithoutFeedback>
@@ -1917,5 +2617,29 @@ const styles = StyleSheet.create({
     width: width, height: 70, backgroundColor: "white", borderTopLeftRadius: 30, borderTopRightRadius: 30,
     alignItems: "center", borderWidth: 1, borderColor: "black"
   },
+
+  paymentOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    paddingVertical: 6,
+    borderRadius: 10,
+    alignItems: "center",
+    marginHorizontal: 5,
+    backgroundColor: "#fff",
+  },
+  paymentSelected: {
+    backgroundColor: "#000",
+    borderColor: "#333",
+  },
+  paymentText: {
+    color: "#333",
+    fontWeight: "600",
+  },
+  paymentSelectedText: {
+    color: "#fff",
+    fontWeight: "700",
+  },
+
   
 });

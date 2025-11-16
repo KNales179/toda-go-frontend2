@@ -61,6 +61,7 @@ export default function ARegister() {
       <TextInput
         style={styles.input}
         placeholder="Admin Email"
+        placeholderTextColor="#A0A0A0"
         value={email}
         onChangeText={setEmail}
         keyboardType="email-address"
@@ -68,6 +69,7 @@ export default function ARegister() {
       <TextInput
         style={styles.input}
         placeholder="Password"
+        placeholderTextColor="#A0A0A0"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
@@ -75,6 +77,7 @@ export default function ARegister() {
       <TextInput
         style={styles.input}
         placeholder="Confirm Password"
+        placeholderTextColor="#A0A0A0"
         value={confirmPassword}
         onChangeText={setConfirmPassword}
         secureTextEntry

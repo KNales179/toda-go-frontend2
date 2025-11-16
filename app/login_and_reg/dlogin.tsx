@@ -1,20 +1,12 @@
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-  TextInput,
-  StatusBar,
-  Alert,
-  Keyboard 
+  View, Text, TouchableOpacity, StyleSheet, Dimensions,
+  TextInput, StatusBar, Alert, Keyboard
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { API_BASE_URL } from "../../config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { saveAuth } from "../utils/authStorage";
 
 const { width } = Dimensions.get("window");
 
@@ -22,57 +14,64 @@ export default function DLogin() {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [busy, setBusy] = useState(false);         
   const router = useRouter();
 
   const loginDriver = async () => {
+    if (busy) return;                     
     Keyboard.dismiss();
+
+
+    if (!email.trim() || !pass) {
+      Alert.alert("Missing info", "Enter your email and password.");
+      return;
+    }
+
+    setBusy(true);                             
     try {
       const response = await fetch(`${API_BASE_URL}/api/login/driver/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: pass }),
+        body: JSON.stringify({ email: email.trim(), password: pass }),
       });
 
+
       const text = await response.text();
-      let data: any;
+      let data: any = null;
       try {
-        data = JSON.parse(text);
+        data = text ? JSON.parse(text) : null;
       } catch {
-        console.error("Server did not return JSON:", text);
+        console.error("Server did not return JSON. Body:", text?.slice(0, 200));
         throw new Error("Invalid server response: not JSON");
       }
 
       if (!response.ok) {
-        throw new Error(data?.error || "Invalid credentials");
+        throw new Error(data?.error || data?.message || `HTTP ${response.status}`);
       }
 
-      // be flexible with backend shapes
+
       const driverId =
         data?.driver?._id ||
         data?.user?._id ||
         data?.driverId ||
         data?._id;
 
-      if (!driverId) {
-        throw new Error("Login succeeded but no driverId returned");
+      if (!driverId) throw new Error("Login succeeded but no driverId returned");
+
+      await AsyncStorage.setItem("driverId", String(driverId));
+      if (data?.token) {
+        await AsyncStorage.setItem("driverToken", String(data.token));
       }
 
-      // unified saved auth
-      await saveAuth({
-        role: "driver",
-        userId: String(driverId),
-        token: data?.token,
-      });
-      await AsyncStorage.setItem("driverId", String(driverId));
-
       Alert.alert("Login Successful", "Welcome!");
-      router.replace("../homedriver/dhome");
+      router.replace("../homedriver/dhome");         
     } catch (error: any) {
-      console.error("Login error (driver):", error);
+      console.error("Login error (driver):", error, error?.stack);
       Alert.alert("Login Failed", error?.message || "Network/server error");
+    } finally {
+      setBusy(false);                             
     }
   };
-
 
   return (
     <View style={styles.container}>
@@ -84,17 +83,20 @@ export default function DLogin() {
 
         <Text style={styles.title}>Sign in with your Driver or Operator account</Text>
 
-        <View style={styles.inputContainer}>
+        <View className="input-email" style={styles.inputContainer}>
           <TextInput
             style={styles.input}
             placeholder="Email"
             placeholderTextColor="#A0A0A0"
+            autoCapitalize="none"
+            keyboardType="email-address"
             value={email}
             onChangeText={setEmail}
+            returnKeyType="next"
           />
         </View>
 
-        <View style={styles.inputContainer}>
+        <View className="input-pass" style={styles.inputContainer}>
           <TextInput
             style={styles.input}
             placeholder="Enter Your Password"
@@ -102,6 +104,7 @@ export default function DLogin() {
             secureTextEntry={!isPasswordVisible}
             value={pass}
             onChangeText={setPass}
+            returnKeyType="done"
           />
           <TouchableOpacity onPress={() => setIsPasswordVisible(prev => !prev)}>
             <MaterialIcons
@@ -116,9 +119,14 @@ export default function DLogin() {
           <Text style={styles.forgotText}>Forget password?</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.signInBtn} onPress={loginDriver}>
-          <Text style={styles.signInText}>Sign In</Text>
+        <TouchableOpacity
+          style={[styles.signInBtn, busy && { opacity: 0.6 }]}   
+          onPress={loginDriver}
+          disabled={busy}
+        >
+          <Text style={styles.signInText}>{busy ? "Signing in..." : "Sign In"}</Text>
         </TouchableOpacity>
+
         <View style={styles.divider}>
           <View style={styles.line} />
           <Text style={styles.orText}>or</Text>

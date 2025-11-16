@@ -7,6 +7,8 @@ const DriverStatus = require("../models/DriverStatus");
 const Passenger = require("../models/Passenger");
 const RideHistory = require("../models/RideHistory");
 const Booking = require("../models/Bookings");
+const Driver = require("../models/Drivers");
+
 
 // ---------- helpers ----------
 const toRad = (v) => (v * Math.PI) / 180;
@@ -23,8 +25,47 @@ const haversineMeters = (a, b) => {
 };
 const isObjectId = (s) => mongoose.Types.ObjectId.isValid(String(s || ""));
 
+function haversine(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
 // Config
 const RESERVATION_SECONDS = null;
+
+async function pickNearestDriver({ pickupLat, pickupLng, bookingType, partySize }) {
+  // Only drivers that are online
+  const online = await DriverStatus.find({ online: true }).lean();
+
+  let best = null;
+  for (const d of online) {
+    if (!d.location || d.location.latitude == null || d.location.longitude == null) continue;
+
+    // Capacity rules (you can customize)
+    const capTotal = d.capacityTotal ?? 4;
+    const capUsed  = d.capacityUsed  ?? 0;
+    const free = capTotal - capUsed;
+
+    if (bookingType === "SOLO" && d.lockedSolo) continue; // driver locked to a VIP already
+    if (bookingType === "GROUP" && free < Math.max(2, Number(partySize) || 2)) continue;
+    if (bookingType === "CLASSIC" && free < 1) continue;
+
+    const dist = haversine(
+      pickupLat, pickupLng,
+      d.location.latitude, d.location.longitude
+    );
+
+    if (!best || dist < best.dist) best = { dist, driver: d };
+  }
+
+  return best?.driver || null;
+}
+
 
 // --- Capacity utils ---
 async function getDriverStatusOrInit(driverId) {
@@ -185,12 +226,19 @@ router.post("/book", async (req, res) => {
       paymentMethod,
       notes,
       passengerId,
-
-      // ▶️ NEW from client
+      pickupPlace,
+      destinationPlace,
       bookingType = "CLASSIC",
       partySize,
+      bookedFor,      // NEW
+      riderName,      // NEW
+      riderPhone,     // NEW
     } = req.body;
 
+    const paymentStatus =
+      String(paymentMethod || "").toLowerCase() === "gcash" ? "awaiting" : "none";
+
+    // Basic coordinate + passenger checks
     if (
       ![pickupLat, pickupLng, destinationLat, destinationLng].every((n) =>
         Number.isFinite(Number(n))
@@ -202,7 +250,17 @@ router.post("/book", async (req, res) => {
       return res.status(400).json({ message: "passengerId required" });
     }
 
-    // Validate booking type + partySize
+    const bookedForBool =
+      typeof bookedFor === "string"
+        ? ["true", "1", "yes"].includes(bookedFor.toLowerCase())
+        : Boolean(bookedFor);
+    const riderNameStr = String(riderName || "").trim();
+    const riderPhoneStr = String(riderPhone || "").trim();
+
+    if (bookedForBool && !riderNameStr) {
+      return res.status(400).json({ message: "riderName is required when bookedFor=true" });
+    }
+
     const type = ["CLASSIC", "GROUP", "SOLO"].includes(String(bookingType).toUpperCase())
       ? String(bookingType).toUpperCase()
       : "CLASSIC";
@@ -215,7 +273,6 @@ router.post("/book", async (req, res) => {
     const isShareable = type !== "SOLO";
     const reservedSeats = size;
 
-    // Nice-to-have display name
     let passengerName = "Passenger";
     try {
       const p = await Passenger.findById(passengerId).select("firstName middleName lastName");
@@ -233,8 +290,13 @@ router.post("/book", async (req, res) => {
       fare,
       paymentMethod,
       notes,
+      pickupPlace,
+      destinationPlace,
 
-      // NEW
+      bookedFor: bookedForBool,  
+      riderName: riderNameStr,    
+      riderPhone: riderPhoneStr,  
+
       bookingType: type,
       partySize: size,
       isShareable,
@@ -243,6 +305,7 @@ router.post("/book", async (req, res) => {
 
       status: "pending",
       passengerName,
+      paymentStatus,
     });
 
     const plain = booking.toObject();
@@ -255,6 +318,7 @@ router.post("/book", async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // ---------- GET /waiting-bookings ----------
 router.get("/waiting-bookings", async (req, res) => {
@@ -281,7 +345,7 @@ router.get("/waiting-bookings", async (req, res) => {
 
     const center = { lat, lng };
 
-    // IMPORTANT: only pending
+    // Only pending bookings
     const pending = await Booking.find({ status: "pending" }).lean();
 
     const filtered = (pending || []).filter((b) => {
@@ -300,7 +364,10 @@ router.get("/waiting-bookings", async (req, res) => {
           pickup: { lat: b.pickupLat, lng: b.pickupLng },
           destination: { lat: b.destinationLat, lng: b.destinationLng },
           fare: b.fare,
-          passengerPreview: { name: b.passengerName || "Passenger" },
+          passengerPreview: {
+            name: b.bookedFor ? (b.riderName || "Rider") : (b.passengerName || "Passenger"),
+            bookedFor: !!b.bookedFor, // NEW indicator
+          },
           distanceKm: distM / 1000,
           createdAt: b.createdAt,
           bookingType: b.bookingType,
@@ -320,45 +387,6 @@ router.get("/waiting-bookings", async (req, res) => {
 });
 
 
-// ---------- POST /accept-booking ----------
-router.post("/accept-booking", async (req, res) => {
-  try {
-    const { bookingId, driverId } = req.body;
-    if (!bookingId || !driverId) {
-      return res.status(400).json({ message: "bookingId and driverId are required" });
-    }
-
-    // Load booking (must be pending)
-    const b = await Booking.findOne({ bookingId, status: "pending" }).lean();
-    if (!b) {
-      return res.status(409).json({ message: "Booking not found or already accepted" });
-    }
-
-    // Ensure DriverStatus exists & online
-    const ds = await getDriverStatusOrInit(driverId);
-    if (!ds || !ds.isOnline) {
-      return res.status(403).json({ message: "Driver is offline" });
-    }
-
-    // Capacity/lock guard and atomic claim+reserve
-    const result = await reserveSeatsAtomic({ driverId, booking: b });
-    if (!result.ok) {
-      const msg =
-        result.reason === "capacity_or_lock"
-          ? "Driver cannot accept (capacity/lock)"
-          : "Booking already accepted by another driver";
-      return res.status(409).json({ message: msg });
-    }
-
-    return res.status(200).json({
-      message: "Booking accepted",
-      booking: result.booking,
-    });
-  } catch (e) {
-    console.error("❌ accept-booking error:", e);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
 
 // ---------- GET /driver-requests/:driverId ----------
 router.get("/driver-requests/:driverId", async (req, res) => {
@@ -395,11 +423,18 @@ router.get("/driver-requests/:driverId", async (req, res) => {
       notes: b.notes || "",
       passengerName: b.passengerName || "Passenger",
       createdAt: b.createdAt || new Date(),
-      // NEW:
+
       bookingType: b.bookingType,
       partySize: b.partySize,
       isShareable: b.isShareable,
       reservationExpiresAt: b.reservationExpiresAt || null,
+
+      // NEW fields for driver UI
+      bookedFor: !!b.bookedFor,
+      riderName: b.riderName || "",
+      riderPhone: b.riderPhone || "",
+      pickupPlace: b.pickupPlace || null,
+      destinationPlace: b.destinationPlace || null,
     }));
 
     return res.status(200).json(sanitized);
@@ -410,6 +445,7 @@ router.get("/driver-requests/:driverId", async (req, res) => {
       .json({ error: "Internal Server Error", message: err?.message || String(err) });
   }
 });
+
 
 // ---------- POST /driver-confirmed (optional legacy) ----------
 router.post("/driver-confirmed", async (req, res) => {
@@ -431,13 +467,94 @@ router.post("/driver-confirmed", async (req, res) => {
   }
 });
 
+// ---------- POST /accept-booking ----------
+router.post("/accept-booking", async (req, res) => {
+  try {
+    const { bookingId, driverId } = req.body;
+    if (!bookingId || !driverId) {
+      return res.status(400).json({ message: "bookingId and driverId are required" });
+    }
+
+    // Load booking (must be pending)
+    const b = await Booking.findOne({ bookingId, status: "pending" }).lean();
+    if (!b) {
+      return res.status(409).json({ message: "Booking not found or already accepted" });
+    }
+
+    // Ensure DriverStatus exists & online
+    const ds = await getDriverStatusOrInit(driverId);
+    if (!ds || !ds.isOnline) {
+      return res.status(403).json({ message: "Driver is offline" });
+    }
+
+    // Capacity/lock guard and atomic claim+reserve
+    const result = await reserveSeatsAtomic({ driverId, booking: b });
+    if (!result.ok) {
+      const msg =
+        result.reason === "capacity_or_lock"
+          ? "Driver cannot accept (capacity/lock)"
+          : "Booking already accepted by another driver";
+      return res.status(409).json({ message: msg });
+    }
+
+    // Persist accepted status + timestamp (idempotent-safe)
+    await Booking.updateOne(
+      { bookingId },
+      {
+        $set: {
+          status: "accepted",
+          driverId,
+          acceptedAt: new Date(),
+          canceledAt: null,
+        },
+      }
+    );
+
+    // 🔵 If this is a GCash ride, snapshot driver's payment info into the booking
+    try {
+      const method = String(result.booking?.paymentMethod || "").toLowerCase();
+      if (method === "gcash") {
+        const d = await Driver.findById(driverId).select("gcashNumber gcashQRUrl gcashQRPublicId");
+        if (d) {
+          await Booking.updateOne(
+            { bookingId },
+            {
+              $set: {
+                paymentStatus: "awaiting",
+                driverPayment: {
+                  number: d.gcashNumber || "",
+                  qrUrl: d.gcashQRUrl || null,
+                  qrPublicId: d.gcashQRPublicId || null,
+                },
+              },
+            }
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("GCash snapshot failed:", e?.message || e);
+    }
+
+    // Return fresh booking
+    const fresh = await Booking.findOne({ bookingId }).lean();
+    return res.status(200).json({
+      message: "Booking accepted",
+      booking: fresh || result.booking,
+    });
+  } catch (e) {
+    console.error("❌ accept-booking error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 // ---------- POST /cancel-booking ----------
 router.post("/cancel-booking", async (req, res) => {
   try {
-    const { bookingId } = req.body;
+    const { bookingId, cancelledBy } = req.body; // "driver" | "passenger" | "system"
     if (!bookingId) {
       return res.status(400).json({ message: "bookingId required" });
-    };
+    }
 
     const b = await Booking.findOne({ bookingId }).lean();
     if (!b) return res.status(404).json({ message: "Booking not found" });
@@ -452,8 +569,8 @@ router.post("/cancel-booking", async (req, res) => {
       {
         $set: {
           status: "canceled",
-          cancelledBy: "passenger",
-          driverId: null,
+          cancelledBy: cancelledBy || "passenger",
+          canceledAt: new Date(),
           reservationExpiresAt: null,
           driverLock: false,
         },
@@ -467,6 +584,7 @@ router.post("/cancel-booking", async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // ---------- POST /complete-booking ----------
 router.post("/complete-booking", async (req, res) => {
@@ -486,23 +604,57 @@ router.post("/complete-booking", async (req, res) => {
 
     const updated = await Booking.findOneAndUpdate(
       { bookingId },
-      { $set: { status: "completed", reservationExpiresAt: null, driverLock: false } },
+      {
+        $set: {
+          status: "completed",
+          completedAt: new Date(),
+          reservationExpiresAt: null,
+          driverLock: false,
+        },
+      },
       { new: true }
     );
 
-    // Save to ride history (best-effort)
     try {
+      const niceType = ((t) => {
+        const up = String(t || "CLASSIC").toUpperCase();
+        if (up === "GROUP") return "Group";
+        if (up === "SOLO") return "Solo";
+        return "Classic";
+      })(updated.bookingType);
+
+      const seats = Number(updated.partySize || 1);
+      const baseFare = Number(updated.fare || 0);
+      const totalFare =
+        niceType === "Group" ? baseFare * (Number.isFinite(seats) ? seats : 1) : baseFare;
+
       await RideHistory.create({
         bookingId: updated.bookingId,
         passengerId: updated.passengerId,
         driverId: updated.driverId,
+
         pickupLat: updated.pickupLat,
         pickupLng: updated.pickupLng,
         destinationLat: updated.destinationLat,
         destinationLng: updated.destinationLng,
-        fare: updated.fare,
+
+        pickupPlace: updated.pickupPlace || null,
+        destinationPlace: updated.destinationPlace || null,
+
+        fare: baseFare,
+        totalFare,
         paymentMethod: updated.paymentMethod,
         notes: updated.notes,
+
+        bookingType: niceType,
+        groupCount: Number.isFinite(seats) ? seats : 1,
+
+        // 🔵 NEW: persist “book for someone else” audit
+        bookedFor: !!updated.bookedFor,
+        riderName: updated.riderName || null,
+        riderPhone: updated.riderPhone || null,
+
+        completedAt: new Date(),
       });
     } catch (e) {
       console.error("❌ Error saving ride history:", e);
@@ -510,13 +662,15 @@ router.post("/complete-booking", async (req, res) => {
 
     return res.status(200).json({
       message: "Booking marked as completed and history saved!",
-      booking: { ...updated.toObject?.() ?? updated, id: updated.bookingId },
+      booking: { ...(updated.toObject?.() ?? updated), id: updated.bookingId },
     });
   } catch (e) {
     console.error("❌ complete-booking error:", e);
     return res.status(500).json({ message: "Server error", details: e.message });
   }
 });
+
+
 
 // ---------- (Optional) GET /bookings — debug only ----------
 router.get("/bookings", async (_req, res) => {
@@ -533,5 +687,38 @@ router.get("/bookings", async (_req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 });
+
+router.get("/booking/:bookingId/payment-info", async (req, res) => {
+  try {
+    const b = await Booking.findOne({ bookingId: req.params.bookingId })
+      .select("bookingId driverId paymentMethod paymentStatus driverPayment status")
+      .lean();
+    if (!b) return res.status(404).json({ ok: false, error: "Not found" });
+    return res.json({ ok: true, ...b });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+router.post("/booking/:bookingId/payment-status", async (req, res) => {
+  try {
+    const { status } = req.body; // "paid" | "failed"
+    if (!["paid", "failed"].includes(String(status))) {
+      return res.status(400).json({ ok: false, error: "Invalid status" });
+    }
+
+    const b = await Booking.findOneAndUpdate(
+      { bookingId: req.params.bookingId },
+      { $set: { paymentStatus: status } },
+      { new: true }
+    ).lean();
+
+    if (!b) return res.status(404).json({ ok: false, error: "Not found" });
+    return res.json({ ok: true, paymentStatus: b.paymentStatus });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 
 module.exports = router;

@@ -1,3 +1,5 @@
+// PChats.tsx – no auth context; uses AsyncStorage(passengerId)
+
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
@@ -17,7 +19,22 @@ export default function PChats() {
   const [passengerId, setPassengerId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hydrating, setHydrating] = useState(true); // wait for AsyncStorage
   const socketRef = useRef<Socket | null>(null);
+
+  // Hydrate passengerId from storage
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const pid = await AsyncStorage.getItem("passengerId");
+        if (mounted) setPassengerId(pid);
+      } finally {
+        if (mounted) setHydrating(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const fetchSessions = useCallback(async () => {
     if (!passengerId) return;
@@ -32,26 +49,16 @@ export default function PChats() {
     }
   }, [passengerId]);
 
-  useEffect(() => {
-    AsyncStorage.getItem("passengerId")
-      .then(v => setPassengerId(v))
-      .catch(() => setPassengerId(null));
-  }, []);
-
+  // Socket + initial fetch whenever passengerId becomes available
   useEffect(() => {
     if (!passengerId) return;
 
-    // connect socket once
     const s = io(SOCKET_URL, { transports: ["websocket"] });
     socketRef.current = s;
 
-    // initial fetch
     fetchSessions();
 
-    // subscribe for updates
-    const onUpd = () => {
-      fetchSessions();
-    };
+    const onUpd = () => fetchSessions();
     s.emit("sessions:subscribe", { passengerId, role: "passenger" });
     s.on("sessions:update", onUpd);
 
@@ -62,6 +69,40 @@ export default function PChats() {
     };
   }, [passengerId, fetchSessions]);
 
+  // UI states
+  if (hydrating) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (!passengerId) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>MESSAGES</Text>
+        <Text style={{ marginTop: 12, marginBottom: 16 }}>
+          You’re not logged in as a passenger.
+        </Text>
+        <TouchableOpacity
+          onPress={() => router.replace("/login_and_reg/plogin")}
+          style={{ padding: 10, backgroundColor: "#5089A3", borderRadius: 8 }}
+        >
+          <Text style={{ color: "#fff" }}>Go to Passenger Login</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={styles.row}
@@ -71,7 +112,7 @@ export default function PChats() {
           params: {
             bookingId: String(item.bookingId ?? ""),
             driverId: item.driverId,
-            passengerId: passengerId!,
+            passengerId, // from AsyncStorage
             role: "passenger",
           },
         })
@@ -89,14 +130,6 @@ export default function PChats() {
     </TouchableOpacity>
   );
 
-  if (loading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>MESSAGES</Text>
@@ -113,7 +146,7 @@ export default function PChats() {
       ) : (
         <FlatList
           data={sessions}
-          keyExtractor={(i) => `${i.driverId}`}
+          keyExtractor={(i) => `${i.driverId}-${i.bookingId ?? ""}`}
           renderItem={renderItem}
         />
       )}

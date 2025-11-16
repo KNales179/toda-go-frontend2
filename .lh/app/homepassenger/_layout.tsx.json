@@ -1,0 +1,18 @@
+{
+    "sourceFile": "app/homepassenger/_layout.tsx",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1760947036139,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1760947036139,
+            "name": "Commit-0",
+            "content": "import React from \"react\";\r\nimport { createBottomTabNavigator } from \"@react-navigation/bottom-tabs\";\r\nimport { Ionicons } from \"@expo/vector-icons\";\r\nimport PHome from \"./phome\";\r\nimport PHistory from \"./phistory\";\r\nimport PChats from \"./pchats\";\r\nimport PProfile from \"./pprofile\";\r\nimport { AuthProvider } from \"../utils/authContext\";\r\n\r\nconst Tab = createBottomTabNavigator();\r\n\r\nexport default function TabsLayout() {\r\n  console.log(\"AUTH:N1:homepassenger:layout:render\");\r\n  return (\r\n    <AuthProvider>\r\n      <Tab.Navigator\r\n        screenOptions={({ route }) => ({\r\n          headerShown: false,\r\n          tabBarIcon: ({ color, size }) => {\r\n            let iconName: string;\r\n\r\n            if (route.name === \"phome\") iconName = \"home\";\r\n            else if (route.name === \"phistory\") iconName = \"document-text\";\r\n            else if (route.name === \"pchats\") iconName = \"chatbubbles\";\r\n            else iconName = \"person\";\r\n\r\n            return <Ionicons name={iconName as any} size={size} color={color} />;\r\n          },\r\n          tabBarActiveTintColor: \"black\",\r\n          tabBarInactiveTintColor: \"lightgray\",\r\n          tabBarStyle: { borderTopLeftRadius: 30, borderTopRightRadius: 30, height: 70, borderWidth: 1, borderColor: \"black\", bottom: 0, paddingBottom:0},\r\n          tabBarLabelStyle: { fontSize: 12 },\r\n        })}\r\n      >\r\n        <Tab.Screen name=\"phome\" component={PHome} options={{ title: \"Home\" }} />\r\n        <Tab.Screen name=\"phistory\" component={PHistory} options={{ title: \"History\" }} />\r\n        <Tab.Screen name=\"pchats\" component={PChats} options={{ title: \"Chats\" }} />\r\n        <Tab.Screen name=\"pprofile\" component={PProfile} options={{ title: \"Profile\" }} />\r\n      </Tab.Navigator>\r\n    </AuthProvider>\r\n\r\n  );\r\n}\r\n"
+        }
+    ]
+}

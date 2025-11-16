@@ -1,0 +1,16 @@
+# ignore heavy/local
+node_modules
+.expo
+.expo-shared
+dist
+web-build
+.git
+.history
+toda-go-backend
+.DS_Store
+
+# keep these for the build
+!package.json
+!yarn.lock
+!app.json
+!eas.json

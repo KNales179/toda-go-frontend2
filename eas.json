@@ -1,0 +1,15 @@
+{
+  "cli": {
+    "version": ">= 3.18.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preview": {
+      "android": { "buildType": "apk" },
+      "env": { "HUSKY": "0" }       
+    },
+    "production": {
+      "android": { "buildType": "app-bundle" }
+    }
+  }
+}

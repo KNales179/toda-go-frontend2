@@ -3,8 +3,9 @@ const router = express.Router();
 const Passenger = require("../models/Passenger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const upload = require("../middleware/upload");
 const { sendMail } = require("../utils/mailer");
+const { uploadMem, uploadBufferToCloudinary } = require("../utils/media");
+const cloudinary = require("../utils/cloudinaryConfig");
 
 
 function fullName(p) {
@@ -124,31 +125,6 @@ router.get("/verify-email", async (req, res) => {
   }
 });
 
-// ---------- LOGIN (block unverified) ----------
-router.post("/login-passenger", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const passenger = await Passenger.findOne({ email });
-    if (!passenger) return res.status(400).json({ error: "Invalid credentials" });
-
-    const ok = await bcrypt.compare(password, passenger.password || "");
-    if (!ok) return res.status(400).json({ error: "Invalid credentials" });
-
-    if (!passenger.isVerified) {
-      return res.status(403).json({ error: "Email not verified", needVerification: true });
-    }
-
-    const payload = { id: passenger.id, email: passenger.email };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
-
-    return res.status(200).json({ message: "Login successful", token });
-  } catch (error) {
-    console.error("login error:", error);
-    return res.status(500).json({ error: "Server error", details: error.message });
-  }
-});
-
 router.post("/resend-verification", async (req, res) => {
   try {
     const { email } = req.body;
@@ -181,22 +157,70 @@ router.post("/resend-verification", async (req, res) => {
   }
 });
 
-// ---------- PROFILE IMAGE (unchanged) ----------
-router.patch("/:id/update-profile-image", upload.single("profileImage"), async (req, res) => {
+router.get("/:id", async (req, res) => {
   try {
-    const passengerId = req.params.id;
-    const passenger = await Passenger.findById(passengerId);
-    if (!passenger) return res.status(404).json({ message: "Passenger not found" });
-    if (!req.file) return res.status(400).json({ message: "No image uploaded." });
-
-    passenger.profileImage = req.file.path;
-    await passenger.save();
-
-    return res.status(200).json({ passenger, message: "Profile image updated!" });
-  } catch (error) {
-    console.error("update-profile-image error:", error);
+    const p = await Passenger.findById(req.params.id);
+    if (!p) return res.status(404).json({ message: "Passenger not found" });
+    return res.json({ passenger: p });
+  } catch (e) {
+    console.error("get passenger error:", e);
     return res.status(500).json({ message: "Server error" });
   }
 });
+
+router.post("/:id/photo", uploadMem.single("profileImage"), async (req, res) => {
+  try {
+    const passengerId = req.params.id;
+    const p = await Passenger.findById(passengerId);
+    if (!p) return res.status(404).json({ message: "Passenger not found" });
+    if (!req.file) {
+      return res.status(400).json({ message: "No image uploaded (profileImage)" });
+    }
+
+    // 🔍 debug logs (temporary)
+    console.log("[PPhoto] id:", passengerId);
+    console.log("[PPhoto] file:", {
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      originalname: req.file.originalname,
+    });
+
+    if (!req.file.mimetype?.startsWith("image/")) {
+      return res.status(400).json({ message: "Only image uploads are allowed" });
+    }
+
+    // delete old asset if exists (best-effort)
+    if (p.profileImagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(p.profileImagePublicId);
+        console.log("[PPhoto] destroyed old:", p.profileImagePublicId);
+      } catch (e) {
+        console.warn("[PPhoto] destroy old failed:", e?.message || e);
+      }
+    }
+
+    const result = await uploadBufferToCloudinary(req.file.buffer, {
+      folder: "toda-go/passengers",
+      resource_type: "image",
+      transformation: [{ quality: "auto" }, { fetch_format: "auto" }],
+    });
+
+    // 🔍 debug log (temporary)
+    console.log("[PPhoto] cloudinary result:", {
+      secure_url: result.secure_url,
+      public_id: result.public_id,
+    });
+
+    p.profileImage = result.secure_url;       // full https URL
+    p.profileImagePublicId = result.public_id;
+    await p.save();
+
+    return res.status(200).json({ passenger: p, message: "Profile image updated!" });
+  } catch (error) {
+    console.error("passenger photo upload error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
 
 module.exports = router;

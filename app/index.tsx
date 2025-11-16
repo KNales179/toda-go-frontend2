@@ -44,7 +44,7 @@ export default function Index() {
         // NEW: check unified auth first
         const auth = await getAuth();
         if (auth?.role && auth?.userId) {
-          router.replace(auth.role === "driver" ? "/homedriver/dhome" : "/homepassenger/phome");
+          // router.replace(auth.role === "driver" ? "/homedriver/dhome" : "/homepassenger/phome");
           return;
         }
 
@@ -52,11 +52,11 @@ export default function Index() {
         const legacyDriverId = await AsyncStorage.getItem("driverId");
         const legacyPassengerId = await AsyncStorage.getItem("passengerId");
         if (legacyDriverId) {
-          router.replace("/homedriver/dhome");
+          // router.replace("/homedriver/dhome");
           return;
         }
         if (legacyPassengerId) {
-          router.replace("/homepassenger/phome");
+          // router.replace("/homepassenger/phome");
           return;
         }
 

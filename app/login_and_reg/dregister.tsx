@@ -7,7 +7,20 @@ import { MaterialIcons } from "@expo/vector-icons";
 import {API_BASE_URL} from "../../config";
 import { useRouter } from "expo-router";
 import { useNavigation } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+
 const { width } = Dimensions.get('window');
+
+
+const asFile = (a: ImagePickerAsset | null, fallback = "photo.jpg") =>
+  a
+    ? ({
+        uri: a.uri,
+        name: (a as any).fileName || fallback,      // iOS often missing fileName
+        type: (a as any).mimeType || "image/jpeg",  // HEIC → treat as jpeg
+      } as any)
+    : null;
+
 
 
 export default function DriverRegister() {
@@ -68,6 +81,10 @@ export default function DriverRegister() {
   const roles = ["Driver", "Operator", "Both"];
   const sectors = ["East", "West", "North", "South", "Other"];
   const voterOptions = ["Oo", "Hindi"];
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false); 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
 
   const pickImage = async (setFunc: (img: ImagePickerAsset) => void) => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -153,101 +170,86 @@ export default function DriverRegister() {
   
 
   const handleSubmit = async () => {
-    console.log("submit clicked")
-    if (!votersIDImage) {
-      Alert.alert("Error", "Please upload Voter's ID image.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      Alert.alert("Error", "Passwords do not match");
-      return;
-    }
+    if (isSubmitting) return; // prevents double-clicks
+    setIsSubmitting(true);
+    try {  
+      console.log("submit clicked")
+      if (!votersIDImage) {
+        Alert.alert("Error", "Please upload Voter's ID image.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        Alert.alert("Error", "Passwords do not match");
+        return;
+      }
 
-    const formData = new FormData();
+      const formData = new FormData();
 
-    formData.append("profileID", profileID); 
-    formData.append("role", role);
-    formData.append("franchiseNumber", franchiseNumber);
-    formData.append("todaName", todaName);
-    formData.append("sector", sector);
-    formData.append("isLucenaVoter", isLucenaVoter);
-    formData.append("votingLocation", votingLocation);
+      formData.append("role", role);
+      formData.append("franchiseNumber", franchiseNumber);
+      formData.append("todaName", todaName);
+      formData.append("sector", sector);
+      formData.append("isLucenaVoter", isLucenaVoter);
+      formData.append("votingLocation", votingLocation);
 
-    // Operator fields
-    formData.append("operatorFirstName", operatorFirstName);
-    formData.append("operatorMiddleName", operatorMiddleName);
-    formData.append("operatorLastName", operatorLastName);
-    formData.append("operatorSuffix", operatorSuffix);
-    formData.append("operatorBirthdate", operatorBirthdate);
-    formData.append("operatorPhone", operatorPhone);
+      // Operator fields
+      formData.append("operatorFirstName", operatorFirstName);
+      formData.append("operatorMiddleName", operatorMiddleName);
+      formData.append("operatorLastName", operatorLastName);
+      formData.append("operatorSuffix", operatorSuffix);
+      formData.append("operatorBirthdate", operatorBirthdate);
+      formData.append("operatorPhone", operatorPhone);
 
-    // Driver fields
-    formData.append("driverFirstName", driverFirstName);
-    formData.append("driverMiddleName", driverMiddleName);
-    formData.append("driverLastName", driverLastName);
-    formData.append("driverSuffix", driverSuffix);
-    formData.append("driverBirthdate", driverBirthdate);
-    formData.append("driverPhone", driverPhone);
+      // Driver fields
+      formData.append("driverFirstName", driverFirstName);
+      formData.append("driverMiddleName", driverMiddleName);
+      formData.append("driverLastName", driverLastName);
+      formData.append("driverSuffix", driverSuffix);
+      formData.append("driverBirthdate", driverBirthdate);
+      formData.append("driverPhone", driverPhone);
 
-    formData.append("experienceYears", experienceYears);
-    formData.append("capacity", String(capacity));
-    formData.append("trikeColor", trikeColor ?? "");  
-    
+      formData.append("experienceYears", experienceYears);
+      formData.append("capacity", String(capacity));
+      formData.append("trikeColor", trikeColor ?? "");  
+      
 
-    // 📩 Email/password handling:
-    if (role === "Driver") {
-      formData.append("driverEmail", email);
-      formData.append("driverPassword", password);
-    }
+      // 📩 Email/password handling:
+      if (role === "Driver") {
+        formData.append("driverEmail", email);
+        formData.append("driverPassword", password);
+      }
 
-    if (role === "Operator") {
-      formData.append("operatorEmail", email);
-      formData.append("operatorPassword", password);
-    }
+      if (role === "Operator") {
+        formData.append("operatorEmail", email);
+        formData.append("operatorPassword", password);
+      }
 
-    if (role === "Both") {
-      formData.append("driverEmail", email);
-      formData.append("driverPassword", password);
-      formData.append("operatorEmail", email);
-      formData.append("operatorPassword", password);
-    }
-    formData.append("votersIDImage", {
-      uri: votersIDImage.uri,
-      name: "voter.jpg",
-      type: "image/jpeg",
-    } as any);
-    if (driversLicenseImage)
-      formData.append("driversLicenseImage", {
-        uri: driversLicenseImage.uri,
-        name: "license.jpg",
-        type: "image/jpeg",
-      } as any);
-    if (orcrImage)
-      formData.append("orcrImage", {
-        uri: orcrImage.uri,
-        name: "orcr.jpg",
-        type: "image/jpeg",
-      } as any);
-    if (selfieImage)
-      formData.append("selfie", {
-        uri: selfieImage.uri,
-        name: "selfie.jpg",
-        type: "image/jpeg",
-      } as any);
+      if (role === "Both") {
+        formData.append("driverEmail", email);
+        formData.append("driverPassword", password);
+        formData.append("operatorEmail", email);
+        formData.append("operatorPassword", password);
+      }
+      const V = asFile(votersIDImage, "voter.jpg");
+      if (V) formData.append("votersIDImage", V);
+      const L = asFile(driversLicenseImage, "license.jpg");
+      if (L) formData.append("driversLicenseImage", L);
+      const O = asFile(orcrImage, "orcr.jpg");
+      if (O) formData.append("orcrImage", O);
+      const S = asFile(selfieImage, "selfie.jpg");
+      if (S) formData.append("selfie", S); // backend expects "selfie"
 
       try {
         console.log("API_BASE_URL is", API_BASE_URL);
         const res = await fetch(`${API_BASE_URL}/api/auth/driver/register-driver`, {
           method: "POST",
           body: formData,
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
+          headers: { Accept: "application/json" },
         });
       
         const text = await res.text();
       
-        let data;
+        let data: any;
         try {
           data = JSON.parse(text);
         } catch (e) {
@@ -260,17 +262,22 @@ export default function DriverRegister() {
             {
               text: "OK",
               onPress: () => {
-                router.push("/login_and_reg/dlogin"); // 👉 navigate to dlogin.tsx
+                router.push("/login_and_reg/dlogin");
               },
             },
           ]);
         }
-        else Alert.alert("Error", data.error || text);
+        else Alert.alert("Error", data.error || data.message || text || "Registration Failed");
       
       } catch (e: any) {
         console.error("Driver registration failed:", e);
         Alert.alert("Error", e.message || "Network error or server issue");
-      }      
+      }    
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
+    };
   };
   const UploadItem = ({ label, onPress, uploaded }: { label: string; onPress: () => void; uploaded: boolean }) => (
     <View style={styles.uploadRow}>
@@ -322,26 +329,27 @@ export default function DriverRegister() {
         {(role === "Both") && (
           <Text style={styles.header}>Personal Information</Text>
         )}
-        <TextInput style={styles.input} placeholder="First Name" value={operatorFirstName} onChangeText={setOperatorFirstName} />
-        <TextInput style={styles.input} placeholder="Middle Name" value={operatorMiddleName} onChangeText={setOperatorMiddleName} />
-        <TextInput style={styles.input} placeholder="Last Name" value={operatorLastName} onChangeText={setOperatorLastName} />
-        <TextInput style={styles.input} placeholder="Suffix" value={operatorSuffix} onChangeText={setOperatorSuffix} />
+        <TextInput style={[styles.input, {color: operatorFirstName ? "#000" : "#888"}]} placeholder="First Name" placeholderTextColor="#A0A0A0" value={operatorFirstName} onChangeText={setOperatorFirstName} />
+        <TextInput style={[styles.input, {color: operatorMiddleName ? "#000" : "#888"}]} placeholder="Middle Name" placeholderTextColor="#A0A0A0" value={operatorMiddleName} onChangeText={setOperatorMiddleName} />
+        <TextInput style={[styles.input, {color: operatorLastName ? "#000" : "#888"}]} placeholder="Last Name" placeholderTextColor="#A0A0A0" value={operatorLastName} onChangeText={setOperatorLastName} />
+        <TextInput style={[styles.input, {color: operatorSuffix ? "#000" : "#888"}]} placeholder="Suffix" placeholderTextColor="#A0A0A0" value={operatorSuffix} onChangeText={setOperatorSuffix} />
         <TouchableOpacity onPress={() => setShowOperatorDate(true)} style={styles.input}>
           <Text style={{ fontSize: 14, color: operatorBirthdate ? "#000" : "#888" }}>{operatorBirthdate || "Select Birthdate"}</Text>
         </TouchableOpacity>
         {showOperatorDate && (
           <DateTimePicker
             value={new Date()}
+            maximumDate={new Date()}
             mode="date"
             display="default"
             onChange={(e, d) => d && handleDateChange(d, setOperatorBirthdate, setShowOperatorDate)}
           />
         )}
         {(role === "Operator" || role === "Driver") && (
-          <TextInput style={styles.input} placeholder="Phone/Contact Number ng Operator" value={operatorPhone} onChangeText={setOperatorPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no" />
+          <TextInput style={[styles.input, {color: operatorPhone ? "#000" : "#888"}]} placeholder="Phone/Contact Number ng Operator" placeholderTextColor="#A0A0A0" value={operatorPhone} onChangeText={setOperatorPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no" />
         )}
         {(role === "Both") && (
-          <TextInput style={styles.input} placeholder="Phone/Contact Number" value={operatorPhone} onChangeText={setOperatorPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no"/>
+          <TextInput style={[styles.input, {color: operatorPhone ? "#000" : "#888"}]} placeholder="Phone/Contact Number" placeholderTextColor="#A0A0A0" value={operatorPhone} onChangeText={setOperatorPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no"/>
         )}
         
 
@@ -349,10 +357,10 @@ export default function DriverRegister() {
         {(role === "Operator" || role === "Driver") && (
           <>
             <Text style={styles.header}>Driver Information</Text>
-            <TextInput style={styles.input} placeholder="First Name" value={driverFirstName} onChangeText={setDriverFirstName} />
-            <TextInput style={styles.input} placeholder="Middle Name" value={driverMiddleName} onChangeText={setDriverMiddleName} />
-            <TextInput style={styles.input} placeholder="Last Name" value={driverLastName} onChangeText={setDriverLastName} />
-            <TextInput style={styles.input} placeholder="Suffix" value={driverSuffix} onChangeText={setDriverSuffix} />
+            <TextInput style={[styles.input, {color: driverFirstName ? "#000" : "#888"}]} placeholder="First Name" placeholderTextColor="#A0A0A0" value={driverFirstName} onChangeText={setDriverFirstName} />
+            <TextInput style={[styles.input, {color: driverMiddleName ? "#000" : "#888"}]} placeholder="Middle Name" placeholderTextColor="#A0A0A0" value={driverMiddleName} onChangeText={setDriverMiddleName} />
+            <TextInput style={[styles.input, {color: driverLastName ? "#000" : "#888"}]} placeholder="Last Name" placeholderTextColor="#A0A0A0" value={driverLastName} onChangeText={setDriverLastName} />
+            <TextInput style={[styles.input, {color: operatorPhone ? "#000" : "#888"}]} placeholder="Suffix" placeholderTextColor="#A0A0A0" value={driverSuffix} onChangeText={setDriverSuffix} />
             <TouchableOpacity onPress={() => setShowDriverDate(true)} style={styles.input}>
               <Text style={{ fontSize: 14, color: driverBirthdate ? "#000" : "#888" }}>{driverBirthdate || "Select Birthdate"}</Text>
             </TouchableOpacity>
@@ -364,7 +372,7 @@ export default function DriverRegister() {
                 onChange={(e, d) => d && handleDateChange(d, setDriverBirthdate, setShowDriverDate)}
               />
             )}
-            <TextInput style={styles.input} placeholder="Phone/Contact Number ng Driver" value={driverPhone} onChangeText={setDriverPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no"/>
+            <TextInput style={[styles.input, {color: driverPhone ? "#000" : "#888"}]} placeholder="Phone/Contact Number ng Driver" placeholderTextColor="#A0A0A0" value={driverPhone} onChangeText={setDriverPhone} keyboardType="phone-pad" autoComplete="off" importantForAutofill="no"/>
           </>
         )}
         <TouchableOpacity
@@ -382,8 +390,8 @@ export default function DriverRegister() {
 
         {/* Registration Info */}
         <Text style={styles.header}>Franchise & Voting Info</Text>
-        <TextInput style={styles.input} placeholder="Franchise Number" value={franchiseNumber} onChangeText={setFranchiseNumber} keyboardType="phone-pad" />
-        <TextInput style={styles.input} placeholder="TODA Name" value={todaName} onChangeText={setTodaName} />
+        <TextInput style={[styles.input, {color: franchiseNumber ? "#000" : "#888"}]} placeholder="Franchise Number" placeholderTextColor="#A0A0A0" value={franchiseNumber} onChangeText={setFranchiseNumber}/>
+        <TextInput style={[styles.input, {color: todaName ? "#000" : "#888"}]} placeholder="TODA Name" placeholderTextColor="#A0A0A0" value={todaName} onChangeText={setTodaName} />
         <TouchableOpacity
           style={styles.customPicker}
           onPress={() => {
@@ -408,7 +416,10 @@ export default function DriverRegister() {
           </Text>
           <MaterialIcons name="keyboard-arrow-down" size={20} color="#888" />
         </TouchableOpacity>
-        <TextInput style={styles.input} placeholder="Kung hindi saang  lugar ikaw bumoboto?" value={votingLocation} onChangeText={setVotingLocation} />
+        {String(isLucenaVoter).toLowerCase() === "hindi" ? (
+          <TextInput style={[styles.input, {color: votingLocation ? "#000" : "#888"}]} placeholder="Kung hindi saang lugar ikaw bumoboto?" placeholderTextColor="#A0A0A0" value={votingLocation} onChangeText={setVotingLocation} />
+        ) : ("")}
+        
 
         {/* Tricycle Info */}
         <Text style={styles.header}>Tricycle Info</Text>
@@ -464,10 +475,40 @@ export default function DriverRegister() {
 
         {/* Account Info */}
         <Text style={styles.header}>Account</Text>
-        <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoComplete="off" importantForAutofill="no"/>
-        <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
-        <TextInput style={styles.input} placeholder="Confirm Password" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
+        <TextInput style={[styles.input, {color: email ? "#000" : "#888"}]} placeholder="Email" placeholderTextColor="#A0A0A0" value={email} onChangeText={setEmail} keyboardType="email-address" autoComplete="off" importantForAutofill="no"/>
+        <View style={{ position: "relative" }}>
+        <TextInput
+          style={[styles.input, { color: password ? "#000" : "#888" }]}
+          placeholder="Password"
+          placeholderTextColor="#A0A0A0"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry={!showPassword}
+        />
+        <TouchableOpacity
+          onPress={() => setShowPassword(!showPassword)}
+          style={{ position: "absolute", right: 10, top: 12 }}
+        >
+          <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color="#888" />
+        </TouchableOpacity>
+      </View>
 
+      <View style={{ position: "relative" }}>
+        <TextInput
+          style={[styles.input, { color: confirmPassword ? "#000" : "#888" }]}
+          placeholder="Confirm Password"
+          placeholderTextColor="#A0A0A0"
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry={!showConfirmPassword}
+        />
+        <TouchableOpacity
+          onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+          style={{ position: "absolute", right: 10, top: 12 }}
+        >
+          <Ionicons name={showConfirmPassword ? "eye-off" : "eye"} size={20} color="#888" />
+        </TouchableOpacity>
+      </View>
         {/* Uploads */}
         <Text style={styles.header}>Uploads</Text>
         {/* Other Documents Uploads */}
