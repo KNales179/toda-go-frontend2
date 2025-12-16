@@ -1,8 +1,17 @@
 // app/homedriver/dprofile.tsx
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Dimensions, TouchableOpacity, Image, Alert, ScrollView,
-  ActionSheetIOS, Platform, Modal
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  TouchableOpacity,
+  Image,
+  Alert,
+  ScrollView,
+  ActionSheetIOS,
+  Platform,
+  Modal,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
@@ -14,12 +23,56 @@ const { width } = Dimensions.get("window");
 type WindowKey = "today" | "7d" | "30d" | "overall";
 type ReportKey = "day" | "week" | "month" | "overall";
 
+const monthNames = [
+  "", // placeholder for index 0
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const fmtMoney = (n?: number) =>
+  Number(n || 0)
+    .toFixed(2)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+const pct = (n?: number) => Math.round(Number(n || 0) * 100);
+
+function shortMoney(n: number) {
+  const v = Number(n || 0);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}k`;
+  return v.toFixed(0);
+}
+
+function formatDayLabel(dateStr: string) {
+  // expects "YYYY-MM-DD" from backend summary.daily
+  if (!dateStr || typeof dateStr !== "string") return "";
+  const [y, m, d] = dateStr.split("-");
+  if (!m || !d) return dateStr;
+  return `${m}/${d}`; // MM/DD
+}
+
 export default function DProfile() {
   const navigation = useNavigation<any>();
 
   const [driverId, setDriverId] = useState<string | null>(null);
 
-  const [profile, setProfile] = useState<{name:string; selfieUrl?:string|null; avgRating:number; ratingCount:number; totalTrips:number} | null>(null);
+  const [profile, setProfile] = useState<{
+    name: string;
+    selfieUrl?: string | null;
+    avgRating: number;
+    ratingCount: number;
+    totalTrips: number;
+  } | null>(null);
   const [kpis, setKpis] = useState<any>(null);
   const [daily, setDaily] = useState<any[]>([]);
   const [monthly, setMonthly] = useState<any[]>([]);
@@ -43,7 +96,9 @@ export default function DProfile() {
   };
 
   const fetchSummary = async (id: string, windowKey: WindowKey) => {
-    const r = await fetch(`${API_BASE_URL}/api/stats/driver/${id}/summary?window=${windowKey}`);
+    const r = await fetch(
+      `${API_BASE_URL}/api/stats/driver/${id}/summary?window=${windowKey}`
+    );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "summary failed");
     setKpis(j.kpis);
@@ -52,19 +107,24 @@ export default function DProfile() {
 
   const fetchMonthly = async (id: string) => {
     const year = new Date().getFullYear();
-    const r = await fetch(`${API_BASE_URL}/api/stats/driver/${id}/monthly?year=${year}`);
+    const r = await fetch(
+      `${API_BASE_URL}/api/stats/driver/${id}/monthly?year=${year}`
+    );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "monthly failed");
     setMonthly(j.months || []);
   };
 
   const fetchReport = async (id: string, windowKey: ReportKey) => {
-    const r = await fetch(`${API_BASE_URL}/api/stats/driver/${id}/report?window=${windowKey}`);
+    const r = await fetch(
+      `${API_BASE_URL}/api/stats/driver/${id}/report?window=${windowKey}`
+    );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "report failed");
     setReportRows(j.rows || []);
   };
 
+  // initial load
   useEffect(() => {
     if (!driverId) return;
     (async () => {
@@ -75,18 +135,20 @@ export default function DProfile() {
           fetchMonthly(driverId),
           fetchReport(driverId, reportWin),
         ]);
-      } catch (e:any) {
+      } catch (e: any) {
         Alert.alert("Stats", e.message || "Failed to load stats");
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driverId]);
 
-  // refresh when window changes
+  // refresh when summary window changes
   useEffect(() => {
     if (!driverId) return;
     fetchSummary(driverId, win).catch(() => {});
   }, [win, driverId]);
 
+  // refresh when report window changes
   useEffect(() => {
     if (!driverId) return;
     fetchReport(driverId, reportWin).catch(() => {});
@@ -98,7 +160,7 @@ export default function DProfile() {
       await AsyncStorage.removeItem("driverId");
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("../../login_and_reg/dlogin");
-    } catch (error:any) {
+    } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to log out.");
     }
   };
@@ -126,12 +188,12 @@ export default function DProfile() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={{flexDirection:"row", alignItems:"center"}}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
           <Image
             source={
               profile?.selfieUrl
                 ? { uri: `${profile.selfieUrl}?t=${Date.now()}` }
-                : require("../../assets/images/profile-placeholder.jpg") // ✅ fixed relative path
+                : require("../../assets/images/profile-placeholder.jpg")
             }
             style={styles.avatar}
           />
@@ -140,12 +202,16 @@ export default function DProfile() {
               {profile?.name || "Driver"}
             </Text>
             <Text style={styles.rating}>
-              ★ {profile?.avgRating?.toFixed?.(2) || "0.00"} ({profile?.ratingCount || 0})
+              ★ {profile?.avgRating?.toFixed?.(2) || "0.00"} (
+              {profile?.ratingCount || 0})
             </Text>
           </View>
         </View>
 
-        <TouchableOpacity onPress={openMenu} hitSlop={{ top:10, left:10, right:10, bottom:10 }}>
+        <TouchableOpacity
+          onPress={openMenu}
+          hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
+        >
           <Ionicons name="ellipsis-vertical" size={24} color="#222" />
         </TouchableOpacity>
       </View>
@@ -153,13 +219,18 @@ export default function DProfile() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         {/* Window Toggle */}
         <View style={styles.toggleRow}>
-          {(["today","7d","30d","overall"] as WindowKey[]).map((w) => (
+          {(["today", "7d", "30d", "overall"] as WindowKey[]).map((w) => (
             <TouchableOpacity
               key={w}
               onPress={() => setWin(w)}
               style={[styles.toggleBtn, win === w && styles.toggleBtnActive]}
             >
-              <Text style={[styles.toggleTxt, win === w && styles.toggleTxtActive]}>
+              <Text
+                style={[
+                  styles.toggleTxt,
+                  win === w && styles.toggleTxtActive,
+                ]}
+              >
                 {w === "7d" ? "7d" : w}
               </Text>
             </TouchableOpacity>
@@ -170,12 +241,15 @@ export default function DProfile() {
         <View style={styles.kpiRow}>
           <KPI label="Income" value={`₱ ${fmtMoney(kpis?.income)}`} />
           <KPI label="Trips" value={kpis?.trips ?? 0} />
-          <KPI label="Hours" value={`${(kpis?.hoursOnline ?? 0).toFixed(1)}h`} />
+          <KPI
+            label="Hours"
+            value={`${(kpis?.hoursOnline ?? 0).toFixed(1)}h`}
+          />
         </View>
         <View style={styles.kpiRow}>
           <KPI label="Avg Fare" value={`₱ ${fmtMoney(kpis?.avgFare)}`} />
-          <KPI label="Complete" value={`${pct(kpis?.completeRate)}%`} />
-          <KPI label="Cancel" value={`${pct(kpis?.cancelRate)}%`} />
+          <KPI label="Completed" value={`${pct(kpis?.completeRate)}%`} />
+          <KPI label="Canceled" value={`${pct(kpis?.cancelRate)}%`} />
         </View>
 
         {/* Charts */}
@@ -189,13 +263,23 @@ export default function DProfile() {
         <View style={styles.reportHeader}>
           <Text style={styles.sectionTitle}>Report</Text>
           <View style={styles.toggleRowSmall}>
-            {(["day","week","month","overall"] as ReportKey[]).map((r) => (
+            {(["day", "week", "month", "overall"] as ReportKey[]).map((r) => (
               <TouchableOpacity
                 key={r}
                 onPress={() => setReportWin(r)}
-                style={[styles.toggleSm, reportWin === r && styles.toggleSmActive]}
+                style={[
+                  styles.toggleSm,
+                  reportWin === r && styles.toggleSmActive,
+                ]}
               >
-                <Text style={[styles.toggleSmTxt, reportWin === r && styles.toggleSmTxtActive]}>{r}</Text>
+                <Text
+                  style={[
+                    styles.toggleSmTxt,
+                    reportWin === r && styles.toggleSmTxtActive,
+                  ]}
+                >
+                  {r}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -205,29 +289,42 @@ export default function DProfile() {
           {reportRows.map((row) => (
             <View key={row.key} style={styles.row}>
               <Text style={styles.cellLeft}>{row.label}</Text>
-              <Text style={styles.cellRight}>
-                {formatCell(row)}
-              </Text>
+              <Text style={styles.cellRight}>{formatCell(row)}</Text>
             </View>
           ))}
         </View>
       </ScrollView>
 
       {/* Android menu */}
-      <Modal transparent visible={menuOpen} onRequestClose={() => setMenuOpen(false)}>
-        <TouchableOpacity style={styles.backdrop} onPress={() => setMenuOpen(false)}>
+      <Modal
+        transparent
+        visible={menuOpen}
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.backdrop}
+          onPress={() => setMenuOpen(false)}
+        >
           <View style={styles.sheet}>
             <TouchableOpacity
               style={styles.sheetItem}
-              onPress={() => { setMenuOpen(false); navigation.navigate("dsettings"); }}
+              onPress={() => {
+                setMenuOpen(false);
+                navigation.navigate("dsettings");
+              }}
             >
               <Text style={styles.sheetItemTxt}>Settings</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.sheetItem}
-              onPress={() => { setMenuOpen(false); handleLogout(); }}
+              onPress={() => {
+                setMenuOpen(false);
+                handleLogout();
+              }}
             >
-              <Text style={[styles.sheetItemTxt, {color:"#C00"}]}>Logout</Text>
+              <Text style={[styles.sheetItemTxt, { color: "#C00" }]}>
+                Logout
+              </Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -246,100 +343,278 @@ function KPI({ label, value }: { label: string; value: any }) {
   );
 }
 
-function MiniBars({ data }: { data: { month:number; income:number }[] }) {
+function MiniBars({ data }: { data: { month: number; income: number }[] }) {
   if (!data || !data.length) return <Text style={styles.empty}>No data</Text>;
-  const max = Math.max(1, ...data.map(d => d.income || 0));
-  return (
-    <View style={styles.barsWrap}>
-      {data.map((d, i) => {
-        const h = Math.max(4, (120 * d.income) / max);
-        return (
-          <View key={i} style={styles.barCol}>
-            <View style={[styles.bar, { height: h }]} />
-            <Text style={styles.barLabel}>{d.month}</Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
 
-function MiniLine({ data, metric }: { data: any[]; metric: "income"|"trips" }) {
-  if (!data || !data.length) return <Text style={styles.empty}>No data</Text>;
-  const vals = data.map(d => Number(d[metric] || 0));
-  const max = Math.max(1, ...vals);
-  const H = 120, W = width - 40;
+  const max = Math.max(1, ...data.map((d) => d.income || 0));
+  const chartHeight = 150;
+  const ticks = [0, max / 2, max];
+
   return (
-    <View style={{ height: H, marginHorizontal: 20 }}>
-      <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, justifyContent:"flex-end" }}>
-        <View style={{ height:1, backgroundColor:"#EEE" }} />
+    <View
+      style={{ flexDirection: "row", marginHorizontal: 20, marginBottom: 4 }}
+    >
+      {/* Y axis with labels */}
+      <View
+        style={{
+          width: 40,
+          height: chartHeight,
+          justifyContent: "space-between",
+        }}
+      >
+        {ticks
+          .slice()
+          .reverse()
+          .map((t, i) => (
+            <View key={i} style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={styles.yAxisLabel}>{shortMoney(t)}</Text>
+            </View>
+          ))}
       </View>
-      <View style={{ flex:1, flexDirection:"row", alignItems:"flex-end" }}>
-        {vals.map((v, i) => {
-          const h = Math.max(2, (H * v) / max);
-          return <View key={i} style={{ width: Math.max(2, W/vals.length - 4), height: h, marginHorizontal:2, backgroundColor:"#5089A3", borderRadius:2 }} />;
+
+      {/* Bars */}
+      <View
+        style={[
+          styles.barsWrap,
+          { height: chartHeight, flex: 1, paddingHorizontal: 0 },
+        ]}
+      >
+        {data.map((d, i) => {
+          const h = Math.max(4, (chartHeight * d.income) / max);
+          const monthLabel =
+            d.month >= 1 && d.month <= 12 ? monthNames[d.month] : String(d.month);
+
+          return (
+            <View key={i} style={styles.barCol}>
+              <View style={[styles.bar, { height: h }]} />
+              <Text style={styles.barLabel}>{monthLabel}</Text>
+            </View>
+          );
         })}
       </View>
     </View>
   );
 }
 
-// formatters
-const fmtMoney = (n?: number) =>
-  (Number(n || 0).toFixed(2)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const pct = (n?: number) => Math.round(Number(n || 0) * 100);
+function MiniLine({
+  data,
+  metric,
+}: {
+  data: any[];
+  metric: "income" | "trips";
+}) {
+  if (!data || !data.length) return <Text style={styles.empty}>No data</Text>;
 
+  const vals = data.map((d) => Number(d[metric] || 0));
+  const max = Math.max(1, ...vals);
+  const H = 120;
+  const W = width - 40;
+
+  return (
+    <View style={{ marginHorizontal: 20, marginBottom: 4 }}>
+      <View
+        style={{
+          height: H,
+          borderBottomWidth: 1,
+          borderBottomColor: "#EEE",
+          flexDirection: "row",
+          alignItems: "flex-end",
+        }}
+      >
+        {data.map((d, i) => {
+          const v = vals[i];
+          const h = Math.max(2, (H * v) / max);
+          const barWidth = Math.max(2, W / data.length - 4);
+
+          const shouldLabel =
+            data.length <= 10 ||
+            i === 0 ||
+            i === data.length - 1 ||
+            i % 7 === 0;
+          const label = shouldLabel ? formatDayLabel(d.date) : "";
+
+          return (
+            <View
+              key={i}
+              style={{
+                alignItems: "center",
+                width: barWidth,
+                marginHorizontal: 2,
+              }}
+            >
+              <View
+                style={{
+                  width: "100%",
+                  height: h,
+                  backgroundColor: "#5089A3",
+                  borderRadius: 2,
+                }}
+              />
+              {label ? (
+                <Text style={styles.barSmallLabel} numberOfLines={1}>
+                  {label}
+                </Text>
+              ) : (
+                <Text style={styles.barSmallLabel}>{" "}</Text>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// formatters for table
 function formatCell(row: any) {
   if (row.key === "income") return `₱ ${fmtMoney(row.value)}`;
-  if (row.key === "distance") return `${Number(row.value || 0).toFixed(1)} km`;
-  if (row.key === "avgRating") return `${Number(row.value || 0).toFixed(2)} ★`;
-  if (row.key === "hoursOnline") return `${Number(row.value || 0).toFixed(1)} h`;
-  if (row.key === "acceptance" || row.key === "cancellation") return `${pct(row.value)}%`;
+  if (row.key === "distance")
+    return `${Number(row.value || 0).toFixed(1)} km`;
+  if (row.key === "avgRating")
+    return `${Number(row.value || 0).toFixed(2)} ★`;
+  if (row.key === "hoursOnline")
+    return `${Number(row.value || 0).toFixed(1)} h`;
+  if (row.key === "acceptance" || row.key === "cancellation")
+    return `${pct(row.value)}%`;
   return String(row.value ?? "—");
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
-  header: { paddingTop: 50, paddingHorizontal: 20, paddingBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  avatar: { width: 64, height: 64, borderRadius: 32, marginRight: 12, backgroundColor:"#eee" },
+  header: {
+    paddingTop: 50,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    marginRight: 12,
+    backgroundColor: "#eee",
+  },
   name: { fontSize: 18, fontWeight: "700", maxWidth: width * 0.55 },
   rating: { color: "#666", marginTop: 4 },
 
-  toggleRow: { flexDirection: "row", justifyContent: "space-around", marginVertical: 8 },
-  toggleBtn: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth:1, borderColor:"#ddd" },
+  toggleRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginVertical: 8,
+  },
+  toggleBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
   toggleBtnActive: { backgroundColor: "#5089A3" },
   toggleTxt: { color: "#333", fontWeight: "600" },
   toggleTxtActive: { color: "#fff" },
 
-  kpiRow: { flexDirection: "row", justifyContent: "space-around", marginTop: 8 },
-  kpi: { backgroundColor: "#F6FAFC", padding: 12, borderRadius: 12, minWidth: (width-60)/3, alignItems: "center" },
+  kpiRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 8,
+  },
+  kpi: {
+    backgroundColor: "#F6FAFC",
+    padding: 12,
+    borderRadius: 12,
+    minWidth: (width - 60) / 3,
+    alignItems: "center",
+  },
   kpiLabel: { color: "#555", fontSize: 12 },
   kpiValue: { fontSize: 16, fontWeight: "700", marginTop: 4 },
 
-  sectionTitle: { fontWeight: "700", fontSize: 16, marginHorizontal: 20, marginTop: 16, marginBottom: 8 },
+  sectionTitle: {
+    fontWeight: "700",
+    fontSize: 16,
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 20,
+  },
 
-  barsWrap: { flexDirection: "row", alignItems: "flex-end", height: 150, paddingHorizontal: 10, marginHorizontal: 10 },
-  barCol: { alignItems: "center", justifyContent: "flex-end", flex: 1 },
+  barsWrap: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    height: 150,
+    paddingHorizontal: 10,
+    marginHorizontal: 10,
+  },
+  barCol: {
+    alignItems: "center",
+    justifyContent: "flex-end",
+    flex: 1,
+  },
   bar: { width: 12, backgroundColor: "#5089A3", borderRadius: 4 },
   barLabel: { fontSize: 10, color: "#666", marginTop: 4 },
 
-  reportHeader: { marginTop: 12, marginHorizontal: 20, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  toggleRowSmall: { flexDirection: "row", gap: 6 },
-  toggleSm: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth:1, borderColor:"#ddd" },
-  toggleSmActive: { backgroundColor:"#5089A3" },
-  toggleSmTxt: { fontSize: 12, color:"#333" },
-  toggleSmTxtActive: { color:"#fff" },
+  yAxisLabel: {
+    fontSize: 10,
+    color: "#888",
+    textAlign: "right",
+  },
+  barSmallLabel: {
+    fontSize: 9,
+    color: "#666",
+    marginTop: 2,
+  },
 
-  table: { marginTop: 8, marginHorizontal: 20, borderRadius: 12, borderWidth: 1, borderColor: "#eee" },
-  row: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#eee", flexDirection:"row", justifyContent:"space-between" },
+  reportHeader: {
+    marginTop: 12,
+    marginHorizontal: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  toggleRowSmall: { flexDirection: "row", gap: 6 },
+  toggleSm: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  toggleSmActive: { backgroundColor: "#5089A3" },
+  toggleSmTxt: { fontSize: 12, color: "#333" },
+  toggleSmTxtActive: { color: "#fff" },
+
+  table: {
+    marginTop: 8,
+    marginHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  row: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   cellLeft: { color: "#333" },
   cellRight: { fontWeight: "700" },
 
   empty: { marginHorizontal: 20, color: "#888" },
 
   // android sheet
-  backdrop: { flex:1, backgroundColor:"rgba(0,0,0,0.25)", justifyContent:"flex-end" },
-  sheet: { backgroundColor:"#fff", paddingBottom: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    paddingBottom: 20,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
   sheetItem: { padding: 16 },
-  sheetItemTxt: { fontSize: 16, color: "#222", textAlign:"center" },
+  sheetItemTxt: { fontSize: 16, color: "#222", textAlign: "center" },
 });

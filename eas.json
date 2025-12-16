@@ -10,6 +10,12 @@
     },
     "production": {
       "android": { "buildType": "app-bundle" }
+    },
+    "development": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     }
   }
 }

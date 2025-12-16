@@ -6,7 +6,7 @@ const passengerSchema = new mongoose.Schema({
     type: String, 
   },
   firstName: { type: String, required: true },
-  middleName: { type: String, required: true },
+  middleName: { type: String },
   lastName: { type: String, required: true },
   suffix: { type: String },
   gender: { type:String },
@@ -23,6 +23,7 @@ const passengerSchema = new mongoose.Schema({
   profileImage: { type: String },
   profileImagePublicId: { type: String },
   homeAddress: { type:String },
+  pushToken: { type: String },
 
   // From original app
   email: { type: String, unique: true, required: true },

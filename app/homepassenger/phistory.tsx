@@ -463,7 +463,7 @@ export default function PHistory() {
   if (!loading && allItems.length === 0) {
     return (
       <View style={styles.container}>
-        <View style={styles.topBar}><Text style={styles.heading}>HISTORYY</Text></View>
+        <View style={styles.topBar}><Text style={styles.heading}>HISTORY</Text></View>
         <View style={styles.emptyWrap}>
           <Image source={require("../../assets/images/tricycle.png")} style={styles.emptyImage} />
           <Text style={styles.emptyMsg}>{errorMsg || "Mag Book na para mag ka history ka."}</Text>

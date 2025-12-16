@@ -20,6 +20,51 @@ import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
+import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
+import Constants from "expo-constants";
+import { buildPassengerMapHtml } from "./subfile/utils/mapHtml";
+import { calculateFare, DiscountType, FareConfigState } from "./subfile/utils/fare";
+import { ensureLocationEnabled } from "./subfile/utils/locationUtils";
+import PassengerRatingModal from "./subfile/components/PassengerRatingModal";
+import PassengerReportModal from "./subfile/components/PassengerReportModal";
+
+
+const { width } = Dimensions.get("window");
+
+
+  
+const DEBUG_ON = true;
+const ALLOWED_TAG_PREFIXES = [
+  "PHOME:push",
+  "PHOME:pollDriver",    
+  "PHOME:pollDone",      
+  "PHOME:pollError",     
+];
+
+const dbg = async (tag: string, extra?: any) => {
+  if (!DEBUG_ON) return;
+
+  const isAllowed = ALLOWED_TAG_PREFIXES.some((p) =>
+    tag.startsWith(p)
+  );
+  if (!isAllowed) return;
+
+  try {
+    const [source, message] = tag.split(":");
+    await fetch(`${API_BASE_URL}/api/debug-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: source || "PHOME",
+        message: message || tag,
+        extra: extra || {},
+      }),
+    });
+  } catch (e) {
+    // never crash the app
+  }
+};
 
 
 
@@ -30,6 +75,48 @@ async function getLocalIconBase64(localPath: any) {
   const base64 = await FileSystem.readAsStringAsync(uri!, { encoding: 'base64' });
   return `data:image/png;base64,${base64}`;
 }
+
+if (Platform.OS === "android") {
+  Notifications.setNotificationChannelAsync("default", {
+    name: "default",
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: "#FF231F7C",
+  });
+}
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  } as Notifications.NotificationBehavior),
+});
+
+
+
+const firedLocalNotifs = new Set<string>();
+
+async function localNotify(title: string, body: string, rawKey?: string) {
+  const key = rawKey || `${title}|${body}`;
+  if (firedLocalNotifs.has(key)) {
+    console.log("🔕 Skipping duplicate local notification:", key);
+    return;
+  }
+  firedLocalNotifs.add(key);
+
+  const perms = await Notifications.getPermissionsAsync();
+  if (perms.status !== "granted") {
+    return;
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    content: { title, body },
+    trigger: null,
+  });
+}
+
+
 
 
 const POI_ICON_FILES: Record<string, any> = {
@@ -48,85 +135,9 @@ const POI_ICON_FILES: Record<string, any> = {
 
 
 
-const { width } = Dimensions.get("window");
-
-type DiscountType = 'none' | 'senior' | 'student' | 'pwd';
-
-const calculateFare = (distanceKm: number, discount: DiscountType = 'none') => {
-  if (!isFinite(distanceKm) || distanceKm <= 0) return 0; 
-
-  const BASE_FARE = 20;   
-  const INCLUDED_KM = 2;
-  const PER_KM = 5;      
-
-  const succeedingWholeKm = Math.max(0, Math.floor(distanceKm - INCLUDED_KM));
-
-  let fare = BASE_FARE + succeedingWholeKm * PER_KM;
-
-  // 20% discount for senior/student/PWD
-  if (discount !== 'none') fare *= 0.8;
-
-  return Math.round(fare); 
-};
-
-async function ensureLocationEnabled() {
-  const services = await Location.hasServicesEnabledAsync();
-  const perm = await Location.getForegroundPermissionsAsync();
-
-  if (!services || perm.status !== 'granted') {
-    Alert.alert(
-      "Enable Location",
-      "We need your location for live tracking. Please enable GPS and grant permission.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Open Settings",
-          onPress: () => {
-            if (Platform.OS === 'android') IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS);
-            else Linking.openURL('app-settings:');
-          }
-        }
-      ]
-    );
-    return false;
-  }
-  return true;
-}
-
-
-
-
 
 
 export default function PHome() {
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const auth = await getAuth();
-        if (auth?.role === "passenger" && auth?.userId) {
-          setPassengerId(String(auth.userId));
-          return;
-        }
-
-        // 2) fallback to legacy key (keeps old screens working)
-        const legacy = await AsyncStorage.getItem("passengerId");
-        if (legacy) {
-          setPassengerId(legacy);
-          return;
-        }
-
-        // 3) no id → force re-login
-        Alert.alert("Session expired", "Please log in again.");
-        router.replace("/login_and_reg/plogin");
-      } catch {
-        Alert.alert("Error", "Could not load your session. Please log in again.");
-        router.replace("/login_and_reg/plogin");
-      }
-    })();
-  }, []);
-
-
   const { location, loading } = useLocation();
   const [copied, setCopied] = useState(false);
   const [destination, setDestination] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -171,6 +182,7 @@ export default function PHome() {
   const status = currentBooking?.status as 'accepted' | 'pending' | 'completed' | 'canceled' | undefined;
   const driverId = currentBooking?.driverId;
   const [passengerId, setPassengerId] = useState<string | null>(null);
+  const [pushToken, setPushToken] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const messageQueue = useRef<any[]>([]);
   const poiFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -183,6 +195,14 @@ export default function PHome() {
   const lastReqIdRef = useRef(0);
   const [showPOIs, setShowPOIs] = useState(false);
   const lastBBoxRef = useRef<{ minLng:number; minLat:number; maxLng:number; maxLat:number; zoom:number } | null>(null);
+  const [showTodas, setShowTodas] = useState(false);
+  const [selectedToda, setSelectedToda] = useState<{
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    destinations: string[];
+  } | null>(null);
   // --- Booking type + party size ---
   const [bookingType, setBookingType] = useState<'CLASSIC' | 'GROUP' | 'SOLO'>('CLASSIC');
   const [partySize, setPartySize] = useState<number>(2);
@@ -201,13 +221,99 @@ export default function PHome() {
   const [riderName, setRiderName] = useState("");
   const [riderPhone, setRiderPhone] = useState("");
   const [selectingPickup, setSelectingPickup] = useState(false); // map-tap to set pickup
-
-
-
-  const ROUTE_MIN_MOVE_M   = 35;   // recompute if user moved >= 35 m
-  const ROUTE_MIN_INTERVAL = 8000; // or every 8s, whichever comes first
-
+  const [fareConfig, setFareConfig] = useState<FareConfigState | null>(null);
+  const [lastDistanceKm, setLastDistanceKm] = useState<number | null>(null);
+  const [lastDistanceText, setLastDistanceText] = useState<string | null>(null);
+  const [lastDurationText, setLastDurationText] = useState<string | null>(null);
+  const ROUTE_MIN_MOVE_M   = 35;  
+  const ROUTE_MIN_INTERVAL = 8000; 
+  const [routeOptions, setRouteOptions] = React.useState<any[]>([]);
+  const [selectedRouteIndex, setSelectedRouteIndex] = React.useState<number | null>(null);
+  const selectedRoute = React.useMemo(
+    () => (selectedRouteIndex != null ? routeOptions[selectedRouteIndex] : null),
+    [routeOptions, selectedRouteIndex]
+  );
+  const [bookingPanelHeight, setBookingPanelHeight] = useState(0);
   const toLatLng = (p:{latitude:number; longitude:number}) => ({ lat: p.latitude, lng: p.longitude });
+  const acceptedNotifiedRef = useRef(false);
+  const completedNotifiedRef = useRef(false);
+
+
+
+  useEffect(() => {
+    if (!selectedRoute || typeof selectedRoute.distanceKm !== "number") return;
+
+    setLastDistanceKm(selectedRoute.distanceKm);
+    setLastDistanceText(selectedRoute.distanceText ?? null);
+    setLastDurationText(selectedRoute.durationText ?? null);
+  }, [selectedRoute]);
+
+  async function registerForPushNotificationsAsync(): Promise<string | null> {
+    try {
+      if (!Device.isDevice) {
+        await dbg("PHOME:notRealDevice", {});
+        return null;
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+
+      if (existingStatus !== "granted") {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== "granted") {
+        await dbg("PHOME:permissionDenied", { existingStatus, finalStatus });
+        return null;
+      }
+
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ??
+        Constants.easConfig?.projectId;
+
+      // 🔑 Important on SDK 53+ in dev/standalone
+      const tokenData = await Notifications.getExpoPushTokenAsync(
+        projectId ? { projectId } : undefined
+      );
+
+      const token = tokenData.data;
+      await dbg("PHOME:getToken", { token });
+
+      return token;
+    } catch (e) {
+      await dbg("PHOME:getTokenError", { error: String(e) });
+      return null;
+    }
+  }
+
+
+
+
+  useEffect(() => {
+    if (!passengerId) return;
+
+    (async () => {
+      const token = await registerForPushNotificationsAsync();
+      if (!token) return;
+
+      setPushToken(token);
+
+      try {
+        await fetch(`${API_BASE_URL}/api/passenger/push-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passengerId, pushToken: token }),
+        });
+
+        dbg("PHOME:tokenSaved", { passengerId, token });
+      } catch (e) {
+        dbg("PHOME:tokenError", { passengerId, error: String(e) });
+      }
+    })();
+  }, [passengerId]);
+
+
 
 
   function ensureUserMarker(lat: number, lng: number) {
@@ -267,6 +373,64 @@ export default function PHome() {
   };
 
   useEffect(() => {
+    (async () => {
+      try {
+        const auth = await getAuth();
+        if (auth?.role === "passenger" && auth?.userId) {
+          setPassengerId(String(auth.userId));
+          return;
+        }
+
+        // 2) fallback to legacy key (keeps old screens working)
+        const legacy = await AsyncStorage.getItem("passengerId");
+        if (legacy) {
+          setPassengerId(legacy);
+          return;
+        }
+
+        // 3) no id → force re-login
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+      } catch {
+        Alert.alert("Error", "Could not load your session. Please log in again.");
+        router.replace("/login_and_reg/plogin");
+      }
+    })();
+  }, []);
+
+  // useEffect(() => {
+  //   const sub = Notifications.addNotificationReceivedListener(async (notif) => {
+  //     dbg("PHOME:pushReceived", {
+  //       title: notif.request.content.title,
+  //       body: notif.request.content.body,
+  //       data: notif.request.content.data,
+  //     });
+
+  //     // ✅ this is fine
+  //     await Notifications.scheduleNotificationAsync({
+  //       content: {
+  //         title: notif.request.content.title || "TODA Go",
+  //         body: notif.request.content.body || "",
+  //         data: notif.request.content.data || {},
+  //         sound: true,
+  //       },
+  //       trigger: null, 
+  //     });
+  //   });
+
+  //   return () => sub.remove();
+  // }, []);
+
+
+
+
+
+
+
+
+
+
+  useEffect(() => {
     if (!mapReady || !iconData) return;
     sendToMap({ type: 'preloadIcons', icons: iconData });
   }, [mapReady, iconData]);
@@ -281,6 +445,20 @@ export default function PHome() {
       setIconData(out);
     })();
   }, []);
+
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/fare-config`);
+        if (!res.ok) return;
+        const j = await res.json();
+        setFareConfig(j);
+      } catch (e) {
+      }
+    };
+    loadConfig();
+  }, []);
+
 
 
   useEffect(() => {
@@ -316,17 +494,36 @@ export default function PHome() {
   }, []);
 
   useEffect(() => {
+    if (!lastDistanceKm || lastDistanceKm <= 0) return;
+
+    const newFare = calculateFare(lastDistanceKm, discount, {
+      bookingType,
+      partySize,
+      config: fareConfig,
+    });
+    setFare(newFare);
+  }, [bookingType, partySize, discount, fareConfig, lastDistanceKm]);
+
+
+  useEffect(() => {
     if (!destination || !pickup) return;
 
     const destKey = `${destination.latitude.toFixed(6)},${destination.longitude.toFixed(6)}`;
 
     if (lastRouteDestKeyRef.current !== destKey) {
-      fetchORSRoute(pickup, destination, true); 
+      setRouteOptions([]);
+      setSelectedRouteIndex(null);
+
+      // ✅ Only use multi-route variants for user-facing data
+      fetchRouteVariants();
+
       routeFramedRef.current = true;
       lastRouteDestKeyRef.current = destKey;
       lastOriginRef.current = { lat: pickup.latitude, lng: pickup.longitude };
     }
   }, [destination, pickup]);
+
+
 
   const canShowChatNotice = bookingConfirmed && !!bookingId && !!matchedDriver?.driverId && !!passengerId;
 
@@ -334,6 +531,7 @@ export default function PHome() {
     if (!location) { Alert.alert("GPS not ready"); return; }
     setPickup({ latitude: location.latitude, longitude: location.longitude });
   };
+
 
 
   // ---------- ORS: fetch route and draw in WebView ----------
@@ -402,19 +600,168 @@ export default function PHome() {
       const mins         = Math.round(durationS / 60);
       const durationText = mins >= 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins} min`;
 
-      const computedFare = calculateFare(distanceKm, discount);
-      setFare(computedFare);
+      setLastDistanceKm(distanceKm);
+      setLastDistanceText(distanceText);
+      setLastDurationText(durationText);
 
-      sendToMap({
-        type: 'drawRoute',
-        route: polylinePoints,
-        distanceKm,
-        distanceText,
-        durationText,
-        fareText: `₱${computedFare} est`,
-        reframe,                        
+      const computedFare = calculateFare(distanceKm, discount, {
+        bookingType,
+        partySize,
+        config: fareConfig,
       });
+      setFare(computedFare);
     } catch {}
+  };
+
+  const fetchRouteVariants = async () => {
+    if (!pickup || !destination) return;
+
+    try {
+      const body = {
+        start: [pickup.longitude, pickup.latitude],          // [lng, lat]
+        end:   [destination.longitude, destination.latitude] // [lng, lat]
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/route/variants`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const text = await res.text();
+      let data: any[] = [];
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("Route API returned non-JSON");
+      }
+
+      if (!res.ok || !Array.isArray(data) || !data.length) {
+        throw new Error("No route options returned.");
+      }
+
+      // 🔹 Enrich each route with text for label on map
+      const enriched = data.map((r: any) => {
+        const distM = r?.summary?.distance ?? 0;
+        const durS = r?.summary?.duration ?? 0;
+
+        const distanceKm = distM / 1000;
+        const distanceText = `${distanceKm.toFixed(2)} km`;
+
+        const mins = Math.round(durS / 60);
+        const durationText =
+          mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60} min` : `${mins} min`;
+
+        const fareVal = calculateFare(distanceKm, discount, {
+          bookingType,
+          partySize,
+          config: fareConfig,
+        });
+        const fareText = `₱${fareVal} est`;
+
+        return {
+          ...r,
+          distanceKm,
+          distanceText,
+          durationText,
+          fareText,
+        };
+      });
+
+      // 🔽 1) Base ordering: SHORTEST DISTANCE first
+      enriched.sort((a, b) => {
+        const da = typeof a.distanceKm === "number" ? a.distanceKm : Infinity;
+        const db = typeof b.distanceKm === "number" ? b.distanceKm : Infinity;
+        return da - db;
+      });
+
+      // 🔽 2) Distance-based dedupe (hugging routes → keep fastest)
+      const deduped: any[] = [];
+      const DIST_ABS_EPS = 0.15; // km ~150m
+      const DIST_REL_EPS = 0.05; // 5%
+
+      for (const r of enriched) {
+        const d = typeof r.distanceKm === "number" ? r.distanceKm : Infinity;
+        let merged = false;
+
+        for (let i = 0; i < deduped.length; i++) {
+          const existing = deduped[i];
+          const ed = typeof existing.distanceKm === "number" ? existing.distanceKm : Infinity;
+
+          const diff = Math.abs(d - ed);
+          const rel = ed > 0 ? diff / ed : 0;
+
+          // same “family” of routes (hugging each other)
+          if (diff <= DIST_ABS_EPS || rel <= DIST_REL_EPS) {
+            const curDur = r?.summary?.duration ?? Infinity;
+            const exDur  = existing?.summary?.duration ?? Infinity;
+
+            // keep the faster one as representative
+            if (curDur < exDur) {
+              deduped[i] = r;
+            }
+            merged = true;
+            break;
+          }
+        }
+
+        if (!merged) {
+          deduped.push(r);
+        }
+      }
+
+      // 🔽 3) Fare-based dedupe:
+      // If multiple routes have the same fare, keep only the FASTEST duration.
+      const fareGroups: Record<string, any[]> = {};
+
+      for (const r of deduped) {
+        const fareKey = r.fareText || ""; // e.g. "₱60 est"
+        if (!fareGroups[fareKey]) fareGroups[fareKey] = [];
+        fareGroups[fareKey].push(r);
+      }
+
+      const fareFiltered: any[] = [];
+
+      for (const fareKey in fareGroups) {
+        const group = fareGroups[fareKey];
+
+        if (group.length === 1) {
+          fareFiltered.push(group[0]);
+          continue;
+        }
+
+        // pick fastest route by duration
+        let best = group[0];
+        for (const r of group) {
+          const dur = r?.summary?.duration ?? Infinity;
+          const bestDur = best?.summary?.duration ?? Infinity;
+          if (dur < bestDur) best = r;
+        }
+
+        fareFiltered.push(best);
+      }
+
+      const finalRoutes = fareFiltered;
+
+      if (!finalRoutes.length) {
+        setRouteOptions([]);
+        setSelectedRouteIndex(null);
+        sendToMap({ type: "clearRoutes" });
+        return;
+      }
+
+      // Save in RN (index 0 = closest; if many similar, it's the fastest in that group)
+      setRouteOptions(finalRoutes);
+      setSelectedRouteIndex(0);
+
+      // Clear old single-route line (if any) and draw these variants in WebView
+      sendToMap({ type: "clearRoute" });
+      sendToMap({ type: "setRoutes", routes: finalRoutes });
+    } catch (e) {
+      setRouteOptions([]);
+      setSelectedRouteIndex(null);
+      sendToMap({ type: "clearRoutes" });
+    }
   };
 
 
@@ -444,39 +791,50 @@ export default function PHome() {
 
   // When a user taps a suggestion
   const choosePlace = (p: { label: string; lat: number; lng: number }) => {
+    // 1) Reflect chosen label in the search box + clear suggestions
     setQuery(p.label);
     setHits([]);
 
+    // 2) Build destination object for state + map
     const dest = { latitude: p.lat, longitude: p.lng };
 
-    // update UI
+    // Update UI state
     setDestination(dest);
     setDropoffName(p.label);
 
-    // ✅ make sure we actually have current location
+    // 3) If we still don't have pickup, just drop the destination marker and bail
     if (!pickup) {
-      Alert.alert('Location unavailable', 'Waiting for GPS, please try again in a moment.');
+      Alert.alert(
+        "Location unavailable",
+        "Waiting for GPS, please try again in a moment."
+      );
+
+      sendToMap({
+        type: "setMarkers",
+        destination: dest,
+        driver: null,
+        pickup: null,
+      });
+
       return;
     }
-    
 
-    // draw route immediately
+    // 4) Cache route endpoints for throttling / comparisons
     lastRouteFromRef.current = { lat: pickup.latitude, lng: pickup.longitude };
-    lastRouteToRef.current   = { lat: dest.latitude,     lng: dest.longitude };
+    lastRouteToRef.current   = { lat: dest.latitude,   lng: dest.longitude };
     lastRouteAtRef.current   = Date.now();
-    fetchORSRoute(
-      { latitude: pickup.latitude, longitude: pickup.longitude },
-      dest,
-      true
-    );
 
+    fetchRouteVariants();
+
+    // 6) Update markers (pickup + destination). Polylines are drawn when variants arrive.
     sendToMap({
-      type: 'setMarkers',
+      type: "setMarkers",
       destination: dest,
       driver: null,
-      pickup: pickup ? { latitude: pickup.latitude, longitude: pickup.longitude } : null,
+      pickup: { latitude: pickup.latitude, longitude: pickup.longitude },
     });
   };
+
 
   useEffect(() => {
     (async () => {
@@ -626,12 +984,6 @@ export default function PHome() {
   }, [mapReady, mapHtml, location, pickup, bookedFor]);
 
 
-  useEffect(() => {
-    if (!livePos) return;
-    console.log("LIVE POS →", livePos.latitude, livePos.longitude);
-  }, [livePos]);
-
-
   // Handle Android hardware back button (logout prompt)
   // useEffect(() => {
   //   const backAction = () => {
@@ -670,557 +1022,21 @@ export default function PHome() {
       }
     })();
   }, []);
-
-
-  // Generate map HTML when location changes
+  
   useEffect(() => {
-  if (!location || mapHtml) return;
-
-  // lock the very first location for the initial setView
-  if (!initialLocRef.current) {
-    initialLocRef.current = {
-      latitude: location.latitude,
-      longitude: location.longitude,
-    };
-  }
-
-  const { latitude: initLat, longitude: initLng } = initialLocRef.current;
-  const iconJson = JSON.stringify(iconData || {});
-
-  const html = String.raw`
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-      <style>
-        html, body, #map { height: 100%; margin: 0; padding: 0; }
-        .distance-label.leaflet-tooltip{
-          background:rgba(0,0,0,.85);color:#fff;border:none;border-radius:12px;
-          padding:4px 8px;box-shadow:0 1px 4px rgba(0,0,0,.3);
-          font-size:12px;line-height:1;white-space:nowrap;
-        }
-        .distance-label.leaflet-tooltip:before{ display:none; }
-      </style>
-    </head>
-    <body>
-      <div id="map"></div>
-      <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-      <script>
-        if (!window.L) {
-          window.ReactNativeWebView?.postMessage(JSON.stringify({ type:'error', msg:'Leaflet failed to load' }));
-        }
-        // --- Map init ---
-        const map = L.map('map', {
-          zoomControl: true,
-          maxBounds: [[13.96,121.643],[13.88,121.588]],
-          maxBoundsViscosity: 0.5,
-          minZoom: 13,
-          maxZoom: 19, 
-          noWrap: true
-        }).setView([${initLat}, ${initLng}], 15);
-
-
-        L.tileLayer('https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=7yQg8w68otDEssrPk9wU', {
-          maxZoom: 19,
-          attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | © <a href="https://www.maptiler.com/">MapTiler</a>'
-        }).addTo(map);
-
-        // --- State ---
-        let userMarker = null;       // blue marker for passenger
-        let destMarker = null;       // green dot
-        let driverMarker = null;     // car icon
-        let destinationLocked = false;
-
-        let routeLine = null;        // drawn polyline
-        let distanceTooltip = null;  // route label (distance • time • fare)
-
-        let poiLayer = L.layerGroup().addTo(map);
-        let landmarkLayer = L.layerGroup().addTo(map);
-        let currentZoomLevel = map.getZoom();    // track last zoom to know in/out
-        let userMarkerPlaced = false; // <— NEW
-        let pickupMarker = null;
-
-        let tweenHandle = null;
-        function tweenMarkerTo(lat, lng, durationMs = 300) {
-          if (!userMarker) return upsertUserMarker(lat, lng);
-          if (tweenHandle) cancelAnimationFrame(tweenHandle);
-
-          const start = userMarker.getLatLng();
-          const end = L.latLng(lat, lng);
-          const t0 = performance.now();
-
-          const step = (t) => {
-            const p = Math.min(1, (t - t0) / durationMs);
-            const latI = start.lat + (end.lat - start.lat) * p;
-            const lngI = start.lng + (end.lng - start.lng) * p;
-            userMarker.setLatLng([latI, lngI]);
-            if (p < 1) tweenHandle = requestAnimationFrame(step);
-          };
-          tweenHandle = requestAnimationFrame(step);
-        }
-
-        function upsertUserMarker(lat, lng){
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-          if (!userMarker){
-            userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 })
-              .addTo(map)
-              .bindTooltip({ permanent:true, direction:"top" });
-          } else {
-            userMarker.setLatLng([lat,lng]);
-          }
-          userMarkerPlaced = true; 
-        }
-
-        function bboxContains(b, lat, lng) {
-          return lng >= b.minLng && lng <= b.maxLng && lat >= b.minLat && lat <= b.maxLat;
-        }
-
-        const poiMarkers = new Map();        // id -> L.Marker
-        const iconCache  = {};               // category -> L.Icon
-        let poiBatchHandle = null;           // cancel previous batch
-
-        function getPoiIcon(cat, poiIcons) {
-          if (iconCache[cat]) return iconCache[cat];
-
-          const url = (poiIcons[cat] && poiIcons[cat].includes('base64,'))
-            ? poiIcons[cat]
-            : 'https://cdn-icons-png.flaticon.com/512/854/854878.png'; // fallback
-
-          iconCache[cat] = L.icon({
-            iconUrl: url,
-            iconSize: [28, 28],
-            iconAnchor: [14, 28],
-          });
-          return iconCache[cat];
-        }
-
-        function addOrUpdatePOIMarker(it, poiIcons) {
-          const existing = poiMarkers.get(it.id);
-          if (existing) {
-            // update position if it changed
-            const curr = existing.getLatLng();
-            if (curr.lat !== it.lat || curr.lng !== it.lng) {
-              existing.setLatLng([it.lat, it.lng]);
-            }
-            return;
-          }
-          const icon = getPoiIcon(it.category, poiIcons); // your cached icon getter
-          const marker = L.marker([it.lat, it.lng], { icon });
-
-          // build popup with "Set Destination"
-          const container = document.createElement('div');
-          const title = document.createElement('b');
-          title.textContent = it.name || it.category || 'POI';
-          container.appendChild(title);
-          container.appendChild(document.createElement('br'));
-          const btn = document.createElement('button');
-          btn.textContent = 'Set Destination';
-          btn.style.marginTop = '6px';
-          btn.onclick = function () {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'setDestinationFromPOI',
-              lat: it.lat, lng: it.lng, label: it.name || it.category || 'POI'
-            }));
-          };
-          container.appendChild(btn);
-          marker.bindPopup(container);
-
-          marker.addTo(poiLayer);
-          poiMarkers.set(it.id, marker);
-        }
-        
-        function bboxContains(b, lat, lng) {
-          return lng >= b.minLng && lng <= b.maxLng && lat >= b.minLat && lat <= b.maxLat;
-        }
-
-        // --- Icons ---
-        const userIcon = L.icon({
-          iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
-          iconSize: [30, 30],
-          iconAnchor: [15, 30], // bottom center
-        });
-
-        const pickupIcon = L.icon({
-          iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/red-dot.png',
-          iconSize: [30,30],
-          iconAnchor: [15,30],
-        });
-
-
-        const destIcon = L.icon({
-          iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png',
-          iconSize: [30, 30],
-          iconAnchor: [15, 30],
-        });
-
-        const carIcon = L.icon({
-          iconUrl: 'https://cdn-icons-png.flaticon.com/512/2972/2972185.png',
-          iconSize: [40, 40],
-          iconAnchor: [20, 40],
-        });
-
-        function setDestination(lat, lng){
-          if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
-          destMarker = L.marker([lat,lng], { icon: destIcon })
-            .addTo(map)
-            .bindTooltip("Destination", { permanent:true, direction:"top" });
-        }
-
-        function setPickup(lat, lng){
-          if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
-          pickupMarker = L.marker([lat,lng], { icon: pickupIcon })
-            .addTo(map)
-            .bindTooltip({ permanent:true, direction:"top" });
-        }
-
-
-        function setDriver(lat, lng){
-          if (driverMarker) { map.removeLayer(driverMarker); driverMarker = null; }
-          if (Number.isFinite(lat) && Number.isFinite(lng)){
-            driverMarker = L.marker([lat,lng], { icon: carIcon })
-              .addTo(map)
-              .bindTooltip("🚕 Driver", { permanent:true, direction:"top" })
-              .setZIndexOffset(1100);
-          }
-        }
-
-        function clearRoute(){
-          if (routeLine){ map.removeLayer(routeLine); routeLine = null; }
-          if (distanceTooltip){ map.removeLayer(distanceTooltip); distanceTooltip = null; }
-        }
-
-        // --- Pick destination by tapping map (when not locked by active driver) ---
-        map.on('click', function(e){
-          if (destinationLocked) return;
-          const { lat, lng } = e.latlng;
-          setDestination(lat, lng);
-          window.ReactNativeWebView.postMessage(JSON.stringify({ latitude: lat, longitude: lng }));
-        });
-
-        (function sendInitialBBox(){
-          const b = map.getBounds();
-          const c = map.getCenter();
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'bbox',
-            bbox: {
-              minLng: b.getWest(), minLat: b.getSouth(),
-              maxLng: b.getEast(), maxLat: b.getNorth()
-            },
-            zoom: map.getZoom(),
-            center: { lat: c.lat, lng: c.lng }
-          }));
-        })();
-
-        map.on('moveend', function () {
-          const b = map.getBounds();
-          const c = map.getCenter();
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'bbox',
-            bbox: {
-              minLng: b.getWest(), minLat: b.getSouth(),
-              maxLng: b.getEast(), maxLat: b.getNorth()
-            },
-            zoom: map.getZoom(),
-            center: { lat: c.lat, lng: c.lng }
-          }));
-        });
-
-
-        // --- Message bridge ---
-        document.addEventListener('message', function(event){
-          let msg = {};
-          try { msg = JSON.parse(event.data || '{}'); } catch(e){ return; }
-
-          if (msg.type === 'ensureUserMarker') {
-            const lat = Number(msg.latitude);
-            const lng = Number(msg.longitude);
-            if (Number.isFinite(lat) && Number.isFinite(lng)) {
-              upsertUserMarker(lat, lng);
-            }
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'userMarkerEnsured',
-              placed: !!userMarker,
-            }));
-            return;
-          }
-
-          // Live passenger location (blue marker only)
-          if (msg.type === 'updateUserLoc'){
-            const lat = Number(msg.latitude), lng = Number(msg.longitude);
-            if (Number.isFinite(lat) && Number.isFinite(lng)) tweenMarkerTo(lat, lng, 300);
-            return;
-          }
-
-          if (msg.type === 'setPickup') {
-            const lat = Number(msg.latitude), lng = Number(msg.longitude);
-            if (Number.isFinite(lat) && Number.isFinite(lng)) setPickup(lat, lng);
-            return;
-          }
-          if (msg.type === 'clearPickup') {
-            if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
-            return;
-          }
-
-
-          // Keep route line's head glued to the moving CL marker
-          if (msg.type === 'nudgeRouteStart') {
-            const lat = Number(msg.latitude), lng = Number(msg.longitude);
-
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'dbg',
-              tag: 'nudgeRouteStart',
-              note: 'received nudge'
-            }));
-
-            if (!routeLine || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-            let pts = routeLine.getLatLngs();
-            if (!Array.isArray(pts) || !pts.length) return;
-            if (Array.isArray(pts[0]) && pts[0].length) { pts = pts[0]; }
-
-            pts[0] = L.latLng(lat, lng);
-            routeLine.setLatLngs(pts);
-
-            if (pts.length > 1) {
-              const p1 = pts[0], p2 = pts[1];
-              const mid = L.latLng(
-                p1.lat + (p2.lat - p1.lat) * 0.15,
-                p1.lng + (p2.lng - p1.lng) * 0.15
-              );
-              routeLine.setLatLngs([p1, mid, ...pts.slice(1)]);
-            }
-
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'nudgeAck', ok: true }));
-            return;
-          }
-
-
-            
-          // Heading intentionally ignored (no cone)
-          if (msg.type === 'updateHeading'){ return; }
-
-          // Draw route with label (distance • duration • fare)
-          if (msg.type === 'drawRoute' && Array.isArray(msg.route) && msg.route.length) {
-            clearRoute();
-            routeLine = L.polyline(msg.route, { weight:4, color:'#1a73e8' }).addTo(map);
-
-            if (msg.reframe) {
-              map.fitBounds(routeLine.getBounds(), { padding:[50,50] });
-            }
-
-            const mid = msg.route[Math.floor(msg.route.length/2)];
-            const label = [msg.distanceText, msg.durationText, msg.fareText]
-              .filter(Boolean).join(' • ');
-            distanceTooltip = L.tooltip({
-              permanent:true, direction:'top', offset:[0,-6], className:'distance-label'
-            }).setContent(label || '').setLatLng(mid).addTo(map);
-            return;
-          }
-
-
-          // Clear route
-          if (msg.type === 'clearRoute'){
-            clearRoute();
-            return;
-          }
-
-          // Driver + Destination markers
-          if (msg.type === 'setMarkers'){
-            destinationLocked = !!msg.driver;
-
-            // destination
-            if (msg.destination && Number.isFinite(msg.destination.latitude) && Number.isFinite(msg.destination.longitude)){
-              setDestination(msg.destination.latitude, msg.destination.longitude);
-            } else if (destMarker){
-              map.removeLayer(destMarker); destMarker = null;
-            }
-
-            if (msg.pickup && Number.isFinite(msg.pickup.latitude) && Number.isFinite(msg.pickup.longitude)){
-              setPickup(msg.pickup.latitude, msg.pickup.longitude);
-            } else if (pickupMarker){
-              map.removeLayer(pickupMarker); pickupMarker = null;
-            }
-
-            // driver
-            if (msg.driver && Number.isFinite(msg.driver.latitude) && Number.isFinite(msg.driver.longitude)){
-              setDriver(msg.driver.latitude, msg.driver.longitude);
-            } else if (driverMarker){
-              map.removeLayer(driverMarker); driverMarker = null;
-            }
-
-            return;
-          }
-
-          if (msg.type === 'requestBbox') {
-            const b = map.getBounds();
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'bbox',
-              bbox: {
-                minLng: b.getWest(),
-                minLat: b.getSouth(),
-                maxLng: b.getEast(),
-                maxLat: b.getNorth()
-              },
-              zoom: map.getZoom()
-            }));
-            return;
-          }
-
-          const poiIcons = ${iconJson};
-          if (msg.type === 'setPOIs' && Array.isArray(msg.items)) {
-            if (poiBatchHandle) {
-              cancelAnimationFrame(poiBatchHandle);
-              poiBatchHandle = null;
-            }
-
-            const z = Number(msg.zoom) || currentZoomLevel;
-            const b = msg.bbox || null;
-
-            // Collect desired items from payload
-            const desired = new Map();
-            for (const it of msg.items) {
-              if (!Number.isFinite(it.lat) || !Number.isFinite(it.lng)) continue;
-              desired.set(it.id, it);
-            }
-            const desiredIds = new Set(desired.keys());
-
-            // Decide strategy based on zoom direction
-            if (z > currentZoomLevel) {
-              // ---- ZOOM IN: accumulate (add new), but prune anything far outside screen
-              if (b) {
-                for (const [id, marker] of poiMarkers) {
-                  const p = marker.getLatLng();
-                  if (!bboxContains(b, p.lat, p.lng)) {
-                    poiLayer.removeLayer(marker);
-                    poiMarkers.delete(id);
-                  }
-                }
-              }
-            } else if (z < currentZoomLevel) {
-              // ---- ZOOM OUT: shrink to what backend sent
-              for (const [id, marker] of poiMarkers) {
-                const keep = desiredIds.has(id);
-                const p = marker.getLatLng();
-                const onScreen = !b || bboxContains(b, p.lat, p.lng);
-                if (!keep || !onScreen) {
-                  poiLayer.removeLayer(marker);
-                  poiMarkers.delete(id);
-                }
-              }
-            } else {
-              // ---- SAME ZOOM (pan): replace by diff within current screen
-              for (const [id, marker] of poiMarkers) {
-                const p = marker.getLatLng();
-                const drop = !desiredIds.has(id) || (b && !bboxContains(b, p.lat, p.lng));
-                if (drop) {
-                  poiLayer.removeLayer(marker);
-                  poiMarkers.delete(id);
-                }
-              }
-            }
-
-            // Build list of new ones to add
-            const toAdd = [];
-            for (const [id, it] of desired) {
-              if (!poiMarkers.has(id)) toAdd.push(it);
-            }
-
-            // ✅ UPDATED PART: adaptive batching for smoother render
-            const total = toAdd.length;
-            const BATCH =
-              total > 300 ? 80 :
-              total > 150 ? 50 :
-              total > 60  ? 35 :
-              25; // small = faster draw
-            const DELAY = total > 150 ? 20 : 10;
-
-            const poiIcons = ${JSON.stringify(iconData || {})};
-
-            let i = 0;
-            const addBatch = () => {
-              const end = Math.min(i + BATCH, total);
-              for (; i < end; i++) {
-                const it = toAdd[i];
-                const icon = getPoiIcon(it.category, poiIcons);
-                const marker = L.marker([it.lat, it.lng], { icon, opacity: 0 }); // start transparent
-
-                const container = document.createElement('div');
-                const title = document.createElement('b');
-                title.textContent = it.name || it.category || 'POI';
-                container.appendChild(title);
-                container.appendChild(document.createElement('br'));
-
-                const btn = document.createElement('button');
-                btn.textContent = 'Set Destination';
-                btn.style.marginTop = '6px';
-                btn.onclick = function () {
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'setDestinationFromPOI',
-                    lat: it.lat, lng: it.lng, label: it.name || it.category || 'POI'
-                  }));
-                };
-                container.appendChild(btn);
-
-                marker.bindPopup(container);
-                marker.addTo(poiLayer);
-                poiMarkers.set(it.id, marker);
-
-                // 🔥 Fade-in animation
-                let op = 0;
-                const fade = () => {
-                  op += 0.15;
-                  if (op <= 1) {
-                    marker.setOpacity(op);
-                    requestAnimationFrame(fade);
-                  } else {
-                    marker.setOpacity(1);
-                  }
-                };
-                requestAnimationFrame(fade);
-              }
-
-              if (i < total) {
-                poiBatchHandle = requestAnimationFrame(() => setTimeout(addBatch, DELAY));
-              } else {
-                poiBatchHandle = null;
-              }
-            };
-
-
-            addBatch();
-
-            currentZoomLevel = z;
-            return;
-          }
-
-
-
-
-
-          // Render Landmarks (pin markers)
-          if (msg.type === 'setLandmarks' && Array.isArray(msg.items)) {
-            landmarkLayer.clearLayers();
-            msg.items.forEach(it => {
-              if (!Number.isFinite(it.lat) || !Number.isFinite(it.lng)) return;
-              L.marker([it.lat, it.lng])
-                .bindTooltip(it.name || 'Landmark', { direction: 'top' })
-                .addTo(landmarkLayer);
-            });
-            return;
-          }
-          if (msg.type === 'clearLandmarks') {
-            landmarkLayer.clearLayers();
-            return;
-          }
-        });
-      </script>
-    </body>
-  </html>
-  `;
-  setMapHtml(html);
-  }, [mapHtml, location]);  
-
+    if (!location) return;
+    if (mapHtml) return; // only build once
+
+    const html = buildPassengerMapHtml({
+      initLat: location.latitude,
+      initLng: location.longitude,
+      MAPTILER_KEY,
+      iconDataJson: JSON.stringify(iconData),
+      avatarUrl,
+    });
+
+    setMapHtml(html);
+  }, [location, iconData, avatarUrl]);
 
 
   useEffect(() => {
@@ -1315,20 +1131,32 @@ export default function PHome() {
 
       // Destination clicks (normal map tap)
       if (parsed.latitude && parsed.longitude) {
-        setDestination(parsed);
+        const dest = { latitude: parsed.latitude, longitude: parsed.longitude };
+        setDestination(dest);
+
         try {
           const results = await Location.reverseGeocodeAsync({
-            latitude: parsed.latitude, longitude: parsed.longitude,
+            latitude: parsed.latitude,
+            longitude: parsed.longitude,
           });
           if (results && results.length > 0) {
             const a = results[0];
-            setDropoffName(`${a.street || ""}${a.street ? ", " : ""}${a.city || a.subregion || ""}`);
+            setDropoffName(
+              `${a.street || ""}${a.street ? ", " : ""}${a.city || a.subregion || ""}`
+            );
           } else {
             setDropoffName("Selected Location");
           }
         } catch {
           setDropoffName("Selected Location");
         }
+
+      }
+
+      if (parsed.type === "routeChosen" && typeof parsed.index === "number") {
+        setSelectedRouteIndex(parsed.index);
+        sendToMap({ type: "selectRouteIndex", index: parsed.index });
+        return;
       }
 
       if (selectingPickup && parsed.latitude && parsed.longitude) {
@@ -1459,43 +1287,24 @@ export default function PHome() {
           Alert.alert('Location unavailable', 'Waiting for GPS, please try again in a moment.');
           return;
         }
-        const { latitude, longitude } = pickup;
 
         lastRouteFromRef.current = { lat: pickup.latitude, lng: pickup.longitude };
-        lastRouteToRef.current   = { lat: dest.latitude,     lng: dest.longitude };
+        lastRouteToRef.current   = { lat: dest.latitude,   lng: dest.longitude };
         lastRouteAtRef.current   = Date.now();
 
-        fetchORSRoute(
-          { latitude: pickup.latitude, longitude: pickup.longitude },
-          dest
-        );
+        // ✅ use multi-route variants
+        fetchRouteVariants();
+
         sendToMap({
           type: 'setMarkers',
           destination: dest,
           driver: null,
+          pickup: { latitude: pickup.latitude, longitude: pickup.longitude },
         });
         return;
       }
     } catch {}
   };
-
-    // Set markers & trigger route drawing when destination is picked
-  // useEffect(() => {
-  //   if (!mapRef.current || bookingConfirmed) return;
-
-  //   const driverCoords = matchedDriver?.location
-  //     ? { latitude: matchedDriver.location.latitude, longitude: matchedDriver.location.longitude }
-  //     : null;
-
-  //   if (driverCoords && destination) {
-  //     mapRef.current.postMessage(JSON.stringify({ type: "setMarkers", destination, driver: driverCoords }));
-  //   }
-
-  //   // 👉 draw route as soon as we have both ends
-  //   if (destination && location) {
-  //     fetchORSRoute(location, destination);
-  //   }
-  // }, [destination, matchedDriver, bookingConfirmed, location]);
 
   const loadLandmarks = async () => {
     try {
@@ -1506,6 +1315,33 @@ export default function PHome() {
       sendToMap({ type: 'setLandmarks', items: [] });
     }
   };
+
+  const loadTodas = async () => {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/admin/todas-public`);
+      const raw = await r.json();
+
+      const items = Array.isArray(raw)
+        ? raw.map((t: any, idx: number) => ({
+            id: t._id || String(idx),
+            name: t.name,
+            lat: t.latitude,
+            lng: t.longitude,
+            // 👇 send list of served destinations (by name)
+            destinations: Array.isArray(t.servedDestinations)
+              ? t.servedDestinations.map((d: any) => d.name || "Unnamed destination")
+              : [],
+          }))
+        : [];
+
+      sendToMap({ type: 'setTodas', items });
+    } catch (e) {
+      console.log('[PHome] loadTodas failed', e);
+      sendToMap({ type: 'clearTodas' });
+    }
+  };
+
+
 
   useEffect(() => {
     if (!pickup) return;
@@ -1529,6 +1365,12 @@ export default function PHome() {
       return;
     }
 
+    dbg("PHOME:bookingSubmitted", {
+      pickup,
+      destination,
+      passengerId,
+    });
+
 
     // Normalize party size based on type
     const normalizedParty =
@@ -1536,9 +1378,30 @@ export default function PHome() {
         ? Math.min(5, Math.max(1, Number(partySize) || 1))
         : 1; // CLASSIC & SOLO always 1
 
+    const chosen =
+      selectedRouteIndex != null && routeOptions[selectedRouteIndex]
+        ? routeOptions[selectedRouteIndex]
+        : null;
+
+    const chosenRoutePayload = chosen
+      ? {
+          preference: chosen.preference || null,
+          distanceMeters: chosen.summary?.distance ?? null,
+          durationSeconds: chosen.summary?.duration ?? null,
+          // Convert [lat, lng] to [lng, lat] if backend prefers GeoJSON style
+          coords: Array.isArray(chosen.coords)
+            ? chosen.coords.map(([lat, lng]: [number, number]) => [lng, lat])
+            : [],
+        }
+      : null;
+    
+
+
     setSearching(true);
     setAlertedBookingComplete(false);
     setTripCompleted(false);
+    acceptedNotifiedRef.current = false;
+    completedNotifiedRef.current = false;
 
     const bookingData = {
       pickupLat: pickup.latitude,
@@ -1556,9 +1419,19 @@ export default function PHome() {
       destinationPlace: dropoffName,
       bookingType,
       partySize: normalizedParty,
+      chosenRoute: chosenRoutePayload,
 
     };
-    console.log(bookingData);
+    if (chosenRoutePayload && Array.isArray(chosenRoutePayload.coords)) {
+      console.log("Coords length:", chosenRoutePayload.coords.length);
+      console.log("First coord:", chosenRoutePayload.coords[0]);
+      console.log(
+        "Last coord:",
+        chosenRoutePayload.coords[chosenRoutePayload.coords.length - 1]
+      );
+    }
+
+
 
     try {
       // reset any old polling
@@ -1585,21 +1458,6 @@ export default function PHome() {
       setSearching(false);
     }
   };
-
-  // {status === "accepted" && bookingId && (
-  //   <ChatNotice
-  //     bookingId={bookingId}
-  //     role="passenger"
-  //     onGoToChat={() =>
-  //       router.push({
-  //         pathname: "/chatcomponent",
-  //         query: { bookingId, driverId, passengerId, role: "passenger" },
-  //       })
-  //     }
-  //   />
-  // )}
-
-  
   
 
   useEffect(() => {
@@ -1620,26 +1478,52 @@ export default function PHome() {
 
   useEffect(() => {
     let interval: any;
+
     const pollForDriverMatch = async () => {
       if (!bookingId) return;
+
       try {
         const res = await fetch(`${API_BASE_URL}/api/bookings`);
         const allBookings = await res.json();
         const myBooking = allBookings.find((b: any) => b && b.id === bookingId);
 
+        dbg("PHOME:pollDriverMatch", {
+          bookingId,
+          found: !!myBooking,
+          status: myBooking?.status,
+        });
+
         if (!myBooking) return;
 
-        if (myBooking.status === "accepted" && !bookingConfirmed) {
+        if (
+          myBooking.status === "accepted" &&
+          !bookingConfirmed
+        ) {
+
+          dbg("PHOME:driverMatched", {
+            bookingId,
+            driverId: myBooking.driverId || null,
+          });
+
           setBookingConfirmed(true);
           setSearching(false);
-          Alert.alert("Driver Accepted!", "The driver has accepted your ride and is on the way!");
+
+          localNotify(
+            "TODA-Go",
+            "A driver accepted your booking.",
+            bookingId ? `accepted-${bookingId}` : "accepted-generic"
+          );
+
+
           if (bookingId) loadPaymentInfo(String(bookingId));
+
           if (myBooking.driverId) {
             try {
               const [driverRes, statusRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/driver/${myBooking.driverId}`),
-                fetch(`${API_BASE_URL}/api/driver-status/${myBooking.driverId}`)
+                fetch(`${API_BASE_URL}/api/driver-status/${myBooking.driverId}`),
               ]);
+
               const driverData = await driverRes.json();
               const statusData = await statusRes.json();
 
@@ -1653,14 +1537,27 @@ export default function PHome() {
                   location: statusData.location || null,
                 });
               }
-            } catch {}
+            } catch (err) {
+              dbg("PHOME:driverFetchError", {
+                bookingId,
+                error: String(err),
+              });
+            }
           }
         }
-      } catch {}
+
+      } catch (err) {
+        dbg("PHOME:pollDriverMatchError", {
+          bookingId,
+          error: String(err),
+        });
+      }
     };
+
     interval = setInterval(pollForDriverMatch, 4000);
     return () => clearInterval(interval);
   }, [bookingId, bookingConfirmed]);
+
 
   useEffect(() => {
     if (!bookingId || !bookingConfirmed) return;
@@ -1671,22 +1568,42 @@ export default function PHome() {
 
   useEffect(() => {
     let interval: any;
+
     const pollForBookingCompletion = async () => {
       if (!bookingId) return;
+
       try {
         const res = await fetch(`${API_BASE_URL}/api/bookings`);
         const allBookings = await res.json();
         const myBooking = allBookings.find((b: any) => b && b.id === bookingId);
-        setAlertedBookingComplete(false);
-        setTripCompleted(false);
 
-        if (myBooking.status === "completed" && !alertedBookingComplete) {
+        dbg("PHOME:pollCompletion", {
+          bookingId,
+          found: !!myBooking,
+          status: myBooking?.status,
+        });
+
+        if (!myBooking) return;
+
+        if (
+          myBooking.status === "completed" &&
+          !alertedBookingComplete
+        ) {
+
+          dbg("PHOME:tripCompleted", {
+            bookingId: currentBooking?.bookingId,
+          });
+
           setAlertedBookingComplete(true);
+          localNotify(
+            "TODA-Go",
+            "A driver accepted your booking.",
+            bookingId ? `accepted-${bookingId}` : "accepted-generic"
+          );
           Alert.alert("Booking Completed", "The driver has marked this ride as completed.");
 
-          // 🔧 reset session so user can book again
-          setSearching(false);                                     // <-- key line
-          if (searchTimeoutRef.current) {                          // clear any pending timers
+          setSearching(false);
+          if (searchTimeoutRef.current) {
             clearTimeout(searchTimeoutRef.current);
             searchTimeoutRef.current = null;
           }
@@ -1695,29 +1612,32 @@ export default function PHome() {
           setBookingId(null);
           setMatchedDriver(null);
           setDestination(null);
-          setShowBookingForm(false);
           setTripCompleted(true);
 
-          // optional: tidy UI state
           setQuery('');
           setHits([]);
 
-          // clear saved “searching:true” from storage
           AsyncStorage.removeItem("phomeBookingState").catch(() => {});
 
-          // clear map
           sendToMap({ type: "setMarkers", destination: null, driver: null });
           sendToMap({ type: "clearRoute" });
           sendToMap({ type: 'clearPickup' });
 
           setFare(0);
         }
-
-      } catch (err) { console.error("❌ Poll error:", err); }
+      } catch (err) {
+        console.error("❌ Poll error:", err);
+        dbg("PHOME:pollCompletionError", {
+          bookingId,
+          error: String(err),
+        });
+      }
     };
+
     interval = setInterval(pollForBookingCompletion, 4000);
     return () => clearInterval(interval);
-  }, [bookingId]);
+  }, [bookingId, alertedBookingComplete]);
+
 
   useEffect(() => {
     const saveBookingState = async () => {
@@ -1759,6 +1679,7 @@ export default function PHome() {
       if (!bookingId) {
         return;
       }
+      dbg("PHOME:cancelRequested", { bookingId });
 
       const resp = await fetch(`${API_BASE_URL}/api/cancel-booking`, {
         method: "POST",
@@ -1918,118 +1839,109 @@ export default function PHome() {
           <View style={styles.searchcont}>
             {/* Destination search */}
             <View style={[styles.searchWrap, { position: "relative" }]}>
-            <TextInput
-              value={query}
-              onChangeText={onChangeQuery}
-              placeholder="Search destination (e.g., SM Lucena)"
-              placeholderTextColor="#777"
-              style={[styles.searchInput, { paddingRight: 35 }]}
-            />
+              <TextInput
+                value={query}
+                onChangeText={onChangeQuery}
+                placeholder="Search destination (e.g., SM Lucena)"
+                placeholderTextColor="#777"
+                style={[styles.searchInput, { paddingRight: 35 }]}
+              />
 
-            {query.length > 0 && (
-              <TouchableOpacity
-                onPress={() => {
-                  setQuery("");
-                  setHits([]);
-                  setDestination(null);
-                  setDropoffName("");
-                  sendToMap({ type: "clearRoute" });
-                  sendToMap({ type: "setMarkers", destination: null, driver: null });
-                }}
-                style={{
-                  position: "absolute",
-                  right: 7,
-                  top: 6,
-                  zIndex: 9999,
-                  padding: 4,
-                }}
-              >
-                <Ionicons name="close-circle" size={20} color="#999" />
-              </TouchableOpacity>
-            )}
+              {query.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setQuery("");
+                    setHits([]);
+                    setDestination(null);
+                    setDropoffName("");
+                    sendToMap({ type: "clearRoute" });
+                    sendToMap({ type: "setMarkers", destination: null, driver: null });
+                  }}
+                  style={{
+                    position: "absolute",
+                    right: 7,
+                    top: 6,
+                    zIndex: 9999,
+                    padding: 4,
+                  }}
+                >
+                  <Ionicons name="close-circle" size={20} color="#999" />
+                </TouchableOpacity>
+              )}
 
-            {/* Results dropdown */}
-            {hits.length > 0 && (
-              <View style={styles.searchResults}>
-                {hits.map((h, i) => (
-                  <TouchableOpacity
-                    key={`${h.lat},${h.lng}-${i}`}
-                    onPress={() => choosePlace(h)}
-                    style={styles.searchItem}
-                  >
-                    <Text style={styles.searchItemText}>{h.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+              {/* Results dropdown */}
+              {hits.length > 0 && (
+                <View style={styles.searchResults}>
+                  {hits.map((h, i) => (
+                    <TouchableOpacity
+                      key={`${h.lat},${h.lng}-${i}`}
+                      onPress={() => choosePlace(h)}
+                      style={styles.searchItem}
+                    >
+                      <Text style={styles.searchItemText}>{h.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
 
+          {/* Floating map controls (bottom-right) */}
+          <View
+            style={[
+              styles.fabContainer,
+              showBookingForm
+                ? { bottom: bookingPanelHeight + 20 } // always float ABOVE the panel
+                : { bottom: 120 },                    // default position when panel closed
+            ]}
+          >
+            {/* Explore Landmarks */}
             <TouchableOpacity
               onPress={() => {
                 if (showLandmarks) {
-                  sendToMap({ type: 'clearLandmarks' });
+                  sendToMap({ type: "clearLandmarks" });
                   setShowLandmarks(false);
                 } else {
-                  loadLandmarks(); // same function we made before
+                  loadLandmarks();
                   setShowLandmarks(true);
                 }
               }}
-              style={{
-                alignSelf: 'center',
-                marginTop: 6,
-                backgroundColor: showLandmarks ? '#81C3E1' : '#eee',
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 8
-              }}
+              style={[
+                styles.fabButton,
+                showLandmarks && styles.fabButtonActive,
+              ]}
             >
-              <Text>{showLandmarks ? 'Hide Landmarks' : 'Explore Landmarks'}</Text>
+              <Ionicons
+                name="map"
+                size={22}
+                color={showLandmarks ? "#fff" : "#333"}
+              />
             </TouchableOpacity>
-            {/* <TouchableOpacity
-              onPress={() => {
-                if (showPOIs) {
-                  setShowPOIs(false);
-                  if (poiFetchTimerRef.current) clearTimeout(poiFetchTimerRef.current);
-                  sendToMap({ type: 'setPOIs', items: [] });
+
+            {/* Show TODA */}
+            <TouchableOpacity
+              onPress={async () => {
+                if (showTodas) {
+                  sendToMap({ type: "clearTodas" });
+                  setShowTodas(false);
                 } else {
-                  setShowPOIs(true);
-                  const b = lastBBoxRef.current;
-                  if (b) {
-                    const { minLng, minLat, maxLng, maxLat, zoom } = b;
-                    if (zoom >= 14) {
-                      if (poiFetchTimerRef.current) clearTimeout(poiFetchTimerRef.current);
-                      poiFetchTimerRef.current = setTimeout(async () => {
-                        try {
-                          const types = 'cafe,convenience,pharmacy,restaurant,fast_food,bank,supermarket,hospital,school,parking,market';
-                          const url = `${API_BASE_URL}/api/pois?types=${encodeURIComponent(types)}&bbox=${minLng},${minLat},${maxLng},${maxLat}`;
-                          const r = await fetch(url);
-                          const items = await r.json();
-                          sendToMap({ type: 'setPOIs', items: Array.isArray(items) ? items : [] });
-                        } catch {
-                          sendToMap({ type: 'setPOIs', items: [] });
-                        }
-                      }, 0);
-                    } else {
-                      sendToMap({ type: 'setPOIs', items: [] });
-                    }
-                  } else {
-                    sendToMap({ type: 'requestBbox' });
-                  }
+                  await loadTodas();
+                  setShowTodas(true);
                 }
               }}
-
-              style={{
-                alignSelf: 'center',
-                marginTop: 6,
-                backgroundColor: showPOIs ? '#81C3E1' : '#eee',
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 8
-              }}
+              style={[
+                styles.fabButton,
+                showTodas && styles.fabButtonActive,
+              ]}
             >
-              <Text>{showPOIs ? 'Hide Places' : 'Show Places'}</Text>
-            </TouchableOpacity> */}
+              <Ionicons
+                name="flag"
+                size={22}
+                color={showTodas ? "#fff" : "#333"} 
+              />
+            </TouchableOpacity>
 
+            {/* Book for someone else */}
             <TouchableOpacity
               onPress={() => {
                 const next = !bookedFor;
@@ -2038,7 +1950,10 @@ export default function PHome() {
                 if (next) {
                   // Turning ON: choose someone else's pickup
                   setSelectingPickup(true);
-                  Alert.alert("Book for someone else", "Tap the map to set the OTHER person's pickup.");
+                  Alert.alert(
+                    "Book for someone else",
+                    "Tap the map to set the OTHER person's pickup."
+                  );
                   return;
                 }
 
@@ -2053,9 +1968,9 @@ export default function PHome() {
                 // Reset route trackers
                 lastRouteDestKeyRef.current = null;
                 lastRouteFromRef.current = null;
-                lastRouteToRef.current   = null;
-                lastRouteAtRef.current   = 0;
-                routeFramedRef.current   = false;
+                lastRouteToRef.current = null;
+                lastRouteAtRef.current = 0;
+                routeFramedRef.current = false;
 
                 // Clear map markers & route
                 sendToMap({ type: "setMarkers", destination: null, driver: null, pickup: null });
@@ -2069,24 +1984,19 @@ export default function PHome() {
                   sendToMap({ type: "setPickup", latitude, longitude });
                 }
               }}
-              style={{
-                alignSelf: 'center',
-                marginTop: 6,
-                backgroundColor: bookedFor ? '#111' : '#eee',
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 8
-              }}
+              style={[
+                styles.fabButton,
+                bookedFor && styles.fabButtonActive,
+              ]}
             >
-              <Text style={{ color: bookedFor ? '#fff' : '#111', fontWeight: '600' }}>
-                {bookedFor ? 'For Someone Else: ON' : 'Book for someone else'}
-              </Text>
+              <Ionicons
+                name="people"
+                size={22}
+                color={bookedFor ? "#fff" : "#333"} 
+              />
             </TouchableOpacity>
-
-
-
-
           </View>
+
 
           <View style={styles.overlayContainer}>
             <View style={styles.overlay}>
@@ -2100,13 +2010,12 @@ export default function PHome() {
                     onPress={cancelRideNow}
                     style={{ backgroundColor: "#f44336", padding: 10, marginTop: 10, borderRadius: 5 }}
                   >
-                    <Text style={{ color: "white", textAlign: "center" }}>CANCEL RIDE</Text>
+                    <Text style={{ color: "white", textAlign: "center" }}>CANCEL BOOKING</Text>
                   </TouchableOpacity>
                 </View>
               )}
 
-              
-
+            
               {matchedDriver && (
                 <View
                   style={{
@@ -2120,6 +2029,10 @@ export default function PHome() {
                     padding: 10,
                     elevation: 3,
                   }}
+                  onLayout={(e) => {
+                    const h = e.nativeEvent.layout.height;
+                    setBookingPanelHeight(h);
+                  }}
                 >
                   {!infoBoxMinimized ? (
                     <>
@@ -2132,12 +2045,10 @@ export default function PHome() {
                           />
                         ) : null}
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: "bold", color: "#000" }}>✅ Driver Found!</Text>
+                          <Text style={{ fontWeight: "bold", color: "#000" }}>Driver Found!</Text>
                           <Text>Name: {matchedDriver?.driverName}</Text>
                           <Text>Franchise No.: {matchedDriver?.franchiseNumber || "N/A"}</Text>
                           <Text>Experience: {matchedDriver?.experienceYears || "N/A"} years</Text>
-
-                          
                         </View>
                       </View>
 
@@ -2167,7 +2078,7 @@ export default function PHome() {
                           <Text style={{ color: "white" }}>Report</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity
+                        {/* <TouchableOpacity
                           onPress={async () => {
                             try {
                               const resp = await fetch(`${API_BASE_URL}/api/cancel-booking`, {
@@ -2194,7 +2105,7 @@ export default function PHome() {
                           style={{ backgroundColor: "#f44336", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}
                         >
                           <Text style={{ color: "white" }}>Cancel</Text>
-                        </TouchableOpacity>
+                        </TouchableOpacity> */}
                       </View>
                       {paymentInfo?.paymentMethod?.toLowerCase() === "gcash" && paymentInfo?.driverPayment?.number &&(
                         <View style={{paddingTop:5}}>
@@ -2248,7 +2159,13 @@ export default function PHome() {
             </View>
 
             {showBookingForm && (
-              <View style={styles.panel}>
+              <View
+                style={styles.panel}
+                onLayout={(e) => {
+                  const h = e.nativeEvent.layout.height;
+                  setBookingPanelHeight(h);
+                }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={styles.panelTitle}>Booking Details</Text>
                   <TouchableOpacity
@@ -2263,9 +2180,9 @@ export default function PHome() {
                 {/* Booking Type Selector */}
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
                   {[
-                    { key: 'CLASSIC', label: 'Classic' },
+                    { key: 'CLASSIC', label: 'Regular' },
                     { key: 'GROUP', label: 'Group' },
-                    { key: 'SOLO', label: 'Solo' },
+                    { key: 'SOLO', label: 'Special' },
                   ].map((opt) => {
                     const active = bookingType === (opt.key as any);
                     return (
@@ -2463,6 +2380,33 @@ export default function PHome() {
               </View>
             )}
 
+            {/* <TouchableOpacity
+              onPress={async () => {
+                const perms = await Notifications.getPermissionsAsync();
+                console.log("🔎 PERMS:", perms);
+
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: "Local test 📣",
+                    body: "If you see this, system notifications are working.",
+                  },
+                  trigger: null, // fire immediately
+                });
+              }}
+              style={{
+                position: "absolute",
+                bottom: 140,
+                left: 20,
+                right: 20,
+                backgroundColor: "#111",
+                padding: 10,
+                borderRadius: 8,
+              }}
+            >
+              <Text style={{ color: "#fff", textAlign: "center", fontWeight: "bold" }}>
+                TEST LOCAL NOTIFICATION
+              </Text>
+            </TouchableOpacity> */}
 
             {!showBookingForm && !(searching || !!bookingId || bookingConfirmed || !!matchedDriver) && (
               <TouchableOpacity
@@ -2473,71 +2417,28 @@ export default function PHome() {
               </TouchableOpacity>
             )}
 
-            {showRatingModal && (
-              <View style={styles.ratingModalOverlay}>
-                <View style={styles.ratingModal}>
-                  <TouchableOpacity style={styles.dismissButton} onPress={() => { setShowRatingModal(false); AsyncStorage.removeItem("driverIdToRate"); }}>
-                    <Ionicons name="close" size={24} color="gray" />
-                  </TouchableOpacity>
+            <PassengerRatingModal
+              visible={showRatingModal}
+              notes={notes}
+              selectedRating={selectedRating}
+              setNotes={setNotes}
+              setSelectedRating={setSelectedRating}
+              onSubmit={submitDriverRating}
+              onClose={async () => {
+                setShowRatingModal(false);
+                await AsyncStorage.removeItem("driverIdToRate");
+              }}
+            />
 
-                  <Text style={styles.modalTitle}>Rate Your Driver</Text>
-
-                  <View style={styles.starsContainer}>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <TouchableOpacity key={star} onPress={() => setSelectedRating(star)}>
-                        <Ionicons name={selectedRating >= star ? "star" : "star-outline"} size={30} color="#FFD700" />
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <TextInput style={styles.feedbackInput} placeholder="Leave a comment (optional)" placeholderTextColor="#A0A0A0" multiline numberOfLines={3} onChangeText={setNotes} value={notes} />
-
-                  <TouchableOpacity style={styles.submitButton} onPress={submitDriverRating}>
-                    <Text style={styles.submitButtonText}>Submit</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {showReportModal && (
-              <View style={styles.ratingModalOverlay}>
-                <View style={[styles.ratingModal, { alignItems: "stretch" }]}>
-                  <TouchableOpacity style={styles.dismissButton} onPress={() => setShowReportModal(false)}>
-                    <Ionicons name="close" size={24} color="gray" />
-                  </TouchableOpacity>
-
-                  <Text style={styles.modalTitle}>Report Driver</Text>
-
-                  <Text style={styles.modalLabel}>Select Report Type:</Text>
-                  <View style={styles.dropdownContainer}>
-                    <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowDropdown(!showDropdown)}>
-                      <Text style={{ color: reportType ? "#000" : "#999" }}>{reportType || "Select a violation"}</Text>
-                      <Ionicons name={showDropdown ? "chevron-up" : "chevron-down"} size={20} color="#999" />
-                    </TouchableOpacity>
-
-                    {showDropdown && (
-                      <View style={styles.dropdownMenu}>
-                        {["Overcharging","Harassment","Unproper Attire","Refusal to Convey Passenger","Other"].map((option) => (
-                          <TouchableOpacity key={option} style={styles.dropdownItem} onPress={() => { setReportType(option); setShowDropdown(false); }}>
-                            <Text style={{ color: "#000" }}>{option}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-
-                  {reportType === "Other" && (
-                    <TextInput style={styles.feedbackInput} placeholder="Describe the issue" placeholderTextColor="#A0A0A0" multiline numberOfLines={3} value={otherReport} onChangeText={setOtherReport} />
-                  )}
-
-                  <TouchableOpacity style={[styles.submitButton, { backgroundColor: "#4CAF50" }]} onPress={submitReport}>
-                    <Text style={styles.submitButtonText}>Submit Report</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-
+            <PassengerReportModal
+              visible={showReportModal}
+              reportType={reportType}
+              setReportType={setReportType}
+              otherReport={otherReport}
+              setOtherReport={setOtherReport}
+              onSubmit={submitReport}
+              onClose={() => setShowReportModal(false)}
+            />
             
           </View>
         </View>
@@ -2641,5 +2542,31 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  
+    fabContainer: {
+    position: "absolute",
+    right: 16,
+    alignItems: "center",
+    zIndex: 30,
+  },
+  fabButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: "#FFF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  fabButtonActive: {
+    backgroundColor: "#111",
+    borderColor: "#111",
+  },
+
 });

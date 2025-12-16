@@ -74,6 +74,10 @@ const media = require("./routes/driverMedia");
 const AdminUsers = require("./routes/AdminUsers");
 const adminDashboard = require("./routes/AdminDashboard");
 const adminStatsRoutes = require("./routes/adminstats");
+const fareConfigRoutes = require("./routes/FareConfig");
+const adminTodaRoutes = require("./routes/adminTodaRoutes");
+const debugLogRoutes = require("./routes/DebugLog");
+const liveMonitorRoutes = require("./routes/liveMonitor");
 
 // Mount routes AFTER io is attached
 app.use("/api/auth/passenger", passengerRoutes);
@@ -100,7 +104,10 @@ app.use("/api/driver", media);
 app.use("/api", AdminUsers);
 app.use("/api", adminDashboard);
 app.use("/api", adminStatsRoutes); 
-
+app.use("/api", fareConfigRoutes);
+app.use("/api/admin", adminTodaRoutes);
+app.use("/api", debugLogRoutes);
+app.use("/api", liveMonitorRoutes);
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));
