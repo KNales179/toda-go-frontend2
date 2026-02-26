@@ -12,10 +12,12 @@ import { API_BASE_URL } from "../../config";
 import { useFocusEffect } from "@react-navigation/native";
 import { MaterialIcons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { useNavigation } from "@react-navigation/native";
 
 const { width } = Dimensions.get("window");
 
 export default function PProfile() {
+  const navigation = useNavigation<any>();
   const [profile, setProfile] = useState<any>(null);
   const [profileImage, setProfileImage] = useState<ImagePickerAsset | null>(null);
   const [emailSending, setEmailSending] = useState(false);
@@ -44,6 +46,61 @@ export default function PProfile() {
   const [ecPhone, setEcPhone] = useState("");
   const [savingEc, setSavingEc] = useState(false);
 
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountType, setDiscountType] = useState<"" | "Student" | "Senior Citizen" | "PWD">("");
+  const [schoolYear, setSchoolYear] = useState("");
+  const [idFront, setIdFront] = useState<ImagePickerAsset | null>(null);
+  const [idBack, setIdBack] = useState<ImagePickerAsset | null>(null);
+  const [submittingDiscount, setSubmittingDiscount] = useState(false);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
+
+
+  const dv = profile?.discountVerification || null;
+  const discountStatus: "none" | "pending" | "approved" | "rejected" =
+    dv?.status === "pending" || dv?.status === "approved" || dv?.status === "rejected"
+      ? dv.status
+      : "none";
+
+  const discountText =
+    discountStatus === "pending"
+      ? "Verifying Discount Application…"
+      : discountStatus === "approved"
+      ? "Discount Approved ✅"
+      : discountStatus === "rejected"
+      ? "Discount Rejected (Tap to Resubmit)"
+      : "Apply for Discount";
+
+  const discountTextColor =
+    discountStatus === "pending"
+      ? "#B26A00"
+      : discountStatus === "approved"
+      ? "#2E7D32"
+      : discountStatus === "rejected"
+      ? "#B00020"
+      : "#5089A3";
+
+  const canOpenDiscountModal = discountStatus === "none" || discountStatus === "rejected";
+
+  const DEBUG_DISCOUNT = true;
+
+
+  const onPressDiscount = () => {
+
+    if (!canOpenDiscountModal) {
+      Alert.alert(
+        "Discount",
+        discountStatus === "pending"
+          ? "Your discount application is being verified. Please wait 1–3 business days."
+          : "Your discount is already approved."
+      );
+      return;
+    }
+    setDiscountOpen(true);
+  };
+
+
+
   const resendPassengerEmail = async () => {
     if (!profile?.email) return Alert.alert("Error", "No email on file.");
     try {
@@ -67,15 +124,29 @@ export default function PProfile() {
     try {
       const passengerId = await AsyncStorage.getItem("passengerId");
       if (!passengerId) return;
+
+
       const response = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`);
       const result = await response.json();
-      if (result?.passenger) setProfile(result.passenger);
+
+      const apiStatus = result?.passenger?.discountVerification?.status;
+
+      if (result?.passenger) {
+        setProfile(result.passenger);
+      }
     } catch (error) {
       console.error("❌ Failed to fetch passenger profile:", error);
     }
   };
 
-  useFocusEffect(React.useCallback(() => { fetchProfile(); }, []));
+
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchProfile();
+      fetchUnseenCount();
+    }, [])
+  );
+
 
   const pickSelfieImage = async () => {
     if (Platform.OS === "ios") {
@@ -322,12 +393,165 @@ export default function PProfile() {
     }
   };
 
+  const pickDiscountImage = async (
+    setter: (img: ImagePickerAsset) => void
+  ) => {
+    const openCamera = async () => {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 1,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        setter(result.assets[0]);
+      }
+    };
+
+    const openGallery = async () => {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 1,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        setter(result.assets[0]);
+      }
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Take Photo", "Choose from Gallery", "Cancel"],
+          cancelButtonIndex: 2,
+        },
+        (index) => {
+          if (index === 0) openCamera();
+          if (index === 1) openGallery();
+        }
+      );
+    } else {
+      Alert.alert("Select Image", "", [
+        { text: "Take Photo", onPress: openCamera },
+        { text: "Choose from Gallery", onPress: openGallery },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
+  };
+
+
+  const submitDiscountRequest = async () => {
+    try {
+      if (!discountType) {
+        return Alert.alert("Discount", "Please select a discount type.");
+      }
+
+      if (discountType === "Student" && !schoolYear.trim()) {
+        return Alert.alert("Discount", "Please enter your school year.");
+      }
+
+      if (!idFront) {
+        return Alert.alert("Discount", "Please upload the front of your ID.");
+      }
+
+      const passengerId = await AsyncStorage.getItem("passengerId");
+      if (!passengerId) return;
+
+      setSubmittingDiscount(true);
+
+      const formData = new FormData();
+      formData.append("discountType", discountType);
+      if (discountType === "Student") {
+        formData.append("schoolYear", schoolYear.trim());
+      }
+
+      formData.append("idFront", {
+        uri: idFront.uri,
+        name: "id-front.jpg",
+        type: (idFront as any).mimeType || "image/jpeg",
+      } as any);
+
+      if (idBack) {
+        formData.append("idBack", {
+          uri: idBack.uri,
+          name: "id-back.jpg",
+          type: (idBack as any).mimeType || "image/jpeg",
+        } as any);
+      }
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/passenger/${passengerId}/discount/submit`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.message || "Failed to submit");
+
+      Alert.alert("Submitted", "Please wait 1–3 business days for verification.");
+      setDiscountOpen(false);
+      setDiscountType("");
+      setSchoolYear("");
+      setIdFront(null);
+      setIdBack(null);
+
+      fetchProfile(); // refresh profile to get status
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Submission failed");
+    } finally {
+      setSubmittingDiscount(false);
+    }
+  };
+
+  // ✅ UPDATED: uses token and fails safe so badge logic works reliably
+  const fetchUnseenCount = async () => {
+    try {
+      setNotifLoading(true);
+
+      const passengerId = await AsyncStorage.getItem("passengerId");
+      const token = await AsyncStorage.getItem("token");
+
+      if (!passengerId || !token) {
+        setUnseenCount(0);
+        return;
+      }
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/notifications?userType=passenger&userId=${encodeURIComponent(passengerId)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!res.ok) {
+        setUnseenCount(0);
+        return;
+      }
+
+      const data = await res.json();
+
+      const list = Array.isArray(data?.items) ? data.items : [];
+      const unseen = list.filter((n: any) => !n.seenAt).length;
+      setUnseenCount(unseen);
+    } catch (e) {
+      setUnseenCount(0);
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+
+
+
+
   const handleLogout = async () => {
     try {
       // remove all passenger-side auth keys
       await AsyncStorage.multiRemove(["role", "userId", "passengerId", "token"]);
       Alert.alert("Logged out", "You have been logged out successfully.");
-      router.replace("../login_and_reg/plogin");
+      router.replace("/login_and_reg/plogin");
     } catch (error) {
       console.error("❌ Logout error:", error);
       Alert.alert("Error", "Failed to log out. Try again.");
@@ -366,10 +590,32 @@ export default function PProfile() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.row} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={30} color="black" />
-          <Text style={styles.lagout}>LogOut</Text>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => {
+            navigation.navigate("notifications");
+          }} 
+        >
+          <View style={{ position: "relative" }}>
+            <Ionicons name="notifications" size={25} color="black" />
+            {unseenCount > 0 && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: -2,
+                  right: -2,
+                  width: 10,
+                  height: 10,
+                  borderRadius: 99,
+                  backgroundColor: "#d11a2a",
+                  borderWidth: 2,
+                  borderColor: "#fff",
+                }}
+              />
+            )}
+          </View>
         </TouchableOpacity>
+
       </View>
 
       <View style={styles.accountContainer}>
@@ -488,7 +734,139 @@ export default function PProfile() {
             </TouchableOpacity>
           </View>
         </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.label}>Discount:</Text>
+          <TouchableOpacity
+            onPress={onPressDiscount}
+            disabled={!canOpenDiscountModal}
+            style={{ maxWidth: "65%", alignItems: "flex-end" }}
+          >
+            <Text
+              style={[
+                styles.value,
+                {
+                  color: canOpenDiscountModal ? discountTextColor : "#999",
+                  textDecorationLine: canOpenDiscountModal ? "underline" : "none",
+                },
+              ]}
+            >
+              {discountText}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.label}>Account:</Text>
+          <TouchableOpacity
+            onPress={handleLogout}
+            style={{ flexDirection: "row", alignItems: "center" }}
+          >
+            <Ionicons name="log-out-outline" size={18} color="#B00020" />
+            <Text style={{ marginLeft: 6, color: "#B00020", fontWeight: "bold" }}>
+              Log Out
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      <Modal transparent visible={discountOpen && canOpenDiscountModal} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
+            <Text style={{ fontWeight: "bold", fontSize: 16, marginBottom: 12 }}>
+              Apply for Discount
+            </Text>
+
+            {/* Discount Type */}
+            {["Student", "Senior Citizen", "PWD"].map((opt) => (
+              <TouchableOpacity key={opt} onPress={() => setDiscountType(opt as any)} style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                <View style={{
+                  width: 18, height: 18, borderRadius: 9,
+                  borderWidth: 2, borderColor: "#5089A3",
+                  alignItems: "center", justifyContent: "center", marginRight: 10
+                }}>
+                  {discountType === opt && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: "#5089A3" }} />}
+                </View>
+                <Text>{opt}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {/* School Year (Student only) */}
+            {discountType === "Student" && (
+              <TextInput
+                placeholder="School Year (e.g. 2025-2026)"
+                value={schoolYear}
+                onChangeText={setSchoolYear}
+                style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 10, marginVertical: 8 }}
+              />
+            )}
+
+            {/* Upload buttons */}
+            <TouchableOpacity
+              onPress={() => pickDiscountImage(setIdFront)}
+              style={styles.uploadButton}
+            >
+              <Text style={{ color: "#fff", textAlign: "center" }}>
+                {idFront ? "Change Front ID" : "Upload ID Front"}
+              </Text>
+            </TouchableOpacity>
+
+            { idFront && (
+              <Image
+                source={{ uri: idFront.uri }}
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 8,
+                  marginTop: 6,
+                  alignSelf: "center",
+                  borderWidth: 1,
+                  borderColor: "#ddd",
+                }}
+              />
+            )}
+
+
+            <TouchableOpacity
+              onPress={() => pickDiscountImage(setIdBack)}
+              style={[styles.uploadButton, { marginTop: 8 }]}
+            >
+              <Text style={{ color: "#fff", textAlign: "center" }}>
+                {idBack ? "Change Back ID" : "Upload ID Back"}
+              </Text>
+            </TouchableOpacity>
+
+            { idBack && (
+              <Image
+                source={{ uri: idBack.uri }}
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 8,
+                  marginTop: 6,
+                  alignSelf: "center",
+                  borderWidth: 1,
+                  borderColor: "#ddd",
+                }}
+              />
+            )}
+
+
+            {/* Actions */}
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 12 }}>
+              <TouchableOpacity onPress={() => setDiscountOpen(false)} style={{ padding: 10, marginRight: 8 }}>
+                <Text>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={submittingDiscount}
+                onPress={submitDiscountRequest}
+                style={{ backgroundColor: "#5089A3", padding: 10, borderRadius: 8, minWidth: 90, alignItems: "center" }}
+              >
+                {submittingDiscount ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff" }}>Submit</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
 
       {/* Edit field modal */}
       <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => { if (!editSaving) { setEditOpen(false); setEditField(null); } }}>

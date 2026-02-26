@@ -3994,6 +3994,11 @@ expo-location@~18.1.6:
   resolved "https://registry.npmjs.org/expo-location/-/expo-location-18.1.6.tgz"
   integrity sha512-l5dQQ2FYkrBgNzaZN1BvSmdhhcztFOUucu2kEfDBMV4wSIuTIt/CKsho+F3RnAiWgvui1wb1WTTf80E8zq48hA==
 
+expo-media-library@~17.1.7:
+  version "17.1.7"
+  resolved "https://registry.npmjs.org/expo-media-library/-/expo-media-library-17.1.7.tgz"
+  integrity sha512-hLCoMvlhjtt+iYxPe71P1F6t06mYGysuNOfjQzDbbf64PCkglCZJYmywPyUSV1V5Hu9DhRj//gEg+Ki+7VWXog==
+
 expo-modules-autolinking@2.1.14:
   version "2.1.14"
   resolved "https://registry.npmjs.org/expo-modules-autolinking/-/expo-modules-autolinking-2.1.14.tgz"
@@ -4027,6 +4032,11 @@ expo-notifications@^0.32.13:
     expo-application "~7.0.7"
     expo-constants "~18.0.10"
 
+expo-print@~14.1.4:
+  version "14.1.4"
+  resolved "https://registry.npmjs.org/expo-print/-/expo-print-14.1.4.tgz"
+  integrity sha512-qcXdvgwtjgFxX92pd3vdZXZRiFAMysVrCJWrPQvZOSw9OjxeczTOUjcAXRdAC2qFki8Gq/eCnKozSxYN5QCFxw==
+
 expo-router@~5.1.7:
   version "5.1.7"
   resolved "https://registry.npmjs.org/expo-router/-/expo-router-5.1.7.tgz"
@@ -4046,6 +4056,11 @@ expo-router@~5.1.7:
     semver "~7.6.3"
     server-only "^0.0.1"
     shallowequal "^1.1.0"
+
+expo-sharing@~13.1.5:
+  version "13.1.5"
+  resolved "https://registry.npmjs.org/expo-sharing/-/expo-sharing-13.1.5.tgz"
+  integrity sha512-X/5sAEiWXL2kdoGE3NO5KmbfcmaCWuWVZXHu8OQef7Yig4ZgHFkGD11HKJ5KqDrDg+SRZe4ISd6MxE7vGUgm4w==
 
 expo-splash-screen@~0.30.10:
   version "0.30.10"

@@ -7,6 +7,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { API_BASE_URL } from "../../config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchRestriction, isRestrictionActive } from "../utils/restriction";
+
 
 const { width } = Dimensions.get("window");
 
@@ -59,12 +61,51 @@ export default function DLogin() {
       if (!driverId) throw new Error("Login succeeded but no driverId returned");
 
       await AsyncStorage.setItem("driverId", String(driverId));
-      if (data?.token) {
-        await AsyncStorage.setItem("driverToken", String(data.token));
+      const token =
+        data?.token || data?.accessToken || data?.jwt || data?.authToken;
+
+      if (token) {
+        await AsyncStorage.setItem("driverToken", String(token));
+      } else {
+        console.log("⚠️ [DLOGIN] No token returned from backend!");
+      }
+
+
+      // ✅ fetch driver (reuse existing endpoint)
+      const infoRes = await fetch(`${API_BASE_URL}/api/driver/${driverId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      const infoText = await infoRes.text();
+      let info: any = null;
+      try {
+        info = infoText ? JSON.parse(infoText) : null;
+      } catch {}
+
+      const driver = info?.driver || null;
+      const r = driver?.restriction || null;
+
+      const isRestricted = !!r?.isRestricted;
+      const endAt = r?.endAt ? new Date(r.endAt).getTime() : null;
+      const active = isRestricted && (!endAt || endAt > Date.now());
+
+      if (active) {
+        router.replace({
+          pathname: "/restriction",
+          params: {
+            userType: "driver",
+            name: driver?.driverName || "Driver",
+            type: r?.type || "ban",
+            reason: r?.reason || "",
+            endAt: r?.endAt ? String(r.endAt) : "",
+          },
+        });
+        return;
       }
 
       Alert.alert("Login Successful", "Welcome!");
-      router.replace("../homedriver/dhome");         
+      router.replace("../homedriver/dhome");
+     
     } catch (error: any) {
       console.error("Login error (driver):", error, error?.stack);
       Alert.alert("Login Failed", error?.message || "Network/server error");

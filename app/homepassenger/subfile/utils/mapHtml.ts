@@ -147,7 +147,7 @@ export function buildPassengerMapHtml({
         function upsertUserMarker(lat, lng){
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
           if (!userMarker){
-            userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 })
+            userMarker = L.marker([lat,lng], { icon: getPassengerIcon(), zIndexOffset: 1000 })
               .addTo(map)
               .bindTooltip({ permanent:true, direction:"top" });
           } else {
@@ -326,11 +326,30 @@ export function buildPassengerMapHtml({
         }
 
         // --- Icons ---
-        const userIcon = L.icon({
-          iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
-          iconSize: [30, 30],
-          iconAnchor: [15, 30], // bottom center
-        });
+        const passengerIcons = {
+          CLASSIC: L.icon({
+            iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
+            iconSize: [30, 30],
+            iconAnchor: [15, 30],
+          }),
+          GROUP: L.icon({
+            iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/orange-dot.png',
+            iconSize: [30, 30],
+            iconAnchor: [15, 30],
+          }),
+          SOLO: L.icon({
+            iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/yellow-dot.png',
+            iconSize: [30, 30],
+            iconAnchor: [15, 30],
+          }),
+        };
+
+        let currentPassengerType = "CLASSIC";
+
+        function getPassengerIcon() {
+          return passengerIcons[currentPassengerType] || passengerIcons.CLASSIC;
+        }
+
 
         const pickupIcon = L.icon({
           iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/red-dot.png',
@@ -435,6 +454,17 @@ export function buildPassengerMapHtml({
             }));
             return;
           }
+
+          if (msg.type === "setPassengerType") {
+            currentPassengerType = msg.passengerType || "CLASSIC";
+
+            if (userMarker) {
+              userMarker.setIcon(getPassengerIcon());
+            }
+
+            return;
+          }
+
 
           // Live passenger location (blue marker only)
           if (msg.type === 'updateUserLoc'){

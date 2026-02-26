@@ -7,7 +7,44 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-          <style> html, body, #map { height: 100%; margin: 0, padding: 0; } </style>
+          <style>
+            html, body, #map { height: 100%; margin: 0; padding: 0; }
+
+            /* Task marker styles (numbered badges) */
+            .task-pin {
+              width: 26px;
+              height: 26px;
+              border-radius: 999px;
+              display:flex;
+              align-items:center;
+              justify-content:center;
+              font: 13px/1 sans-serif;
+              font-weight: 900;
+              color: #fff;
+              border: 2px solid rgba(255,255,255,.9);
+              box-shadow: 0 6px 16px rgba(0,0,0,.25);
+              user-select:none;
+            }
+            .task-pickup { background: #f59e0b; }  /* orange */
+            .task-dropoff { background: #10b981; } /* green */
+            .task-active  { transform: scale(1.18); border-color: #111827; }
+
+            /* pwApp pin */
+            .pwapp-pin {
+              width: 26px;
+              height: 26px;
+              border-radius: 999px;
+              display:flex;
+              align-items:center;
+              justify-content:center;
+              font: 16px/1 sans-serif;
+              background: #111827;
+              color: #fff;
+              border: 2px solid rgba(255,255,255,.9);
+              box-shadow: 0 6px 16px rgba(0,0,0,.25);
+              user-select:none;
+            }
+          </style>
         </head>
         <body>
           <div id="map"></div>
@@ -19,12 +56,30 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
             let routeLine = null;
             let midTooltipMarker = null;
             let waitingLayer = null;
-            let driverTweenHandle = null;
-            let tweenHandle = null;
-            let todaLayer = null; 
+            let todaLayer = null;
 
+            // ✅ NEW layers
+            let pwappLayer = null;
+            let taskLayer = null;
+            let taskOrderLine = null;
 
+            // Debug overlay
             let __dbgDiv = null;
+
+            function bookingTypeToIconUrl(t){
+              const type = String(t || 'CLASSIC').toUpperCase();
+              if (type === 'GROUP') return 'https://maps.gstatic.com/mapfiles/ms2/micons/orange-dot.png';
+              if (type === 'SOLO' || type === 'SPECIAL') return 'https://maps.gstatic.com/mapfiles/ms2/micons/yellow-dot.png';
+              return 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png';
+            }
+
+            function iconForBookingType(t){
+              return L.icon({
+                iconUrl: bookingTypeToIconUrl(t),
+                iconSize: [30, 30],
+              });
+            }
+
             function __ensureDbg(){
               if (__dbgDiv) return __dbgDiv;
               __dbgDiv = document.createElement('div');
@@ -49,47 +104,26 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
               } catch {}
             };
 
-            function tweenDriverTo(lat, lng, durationMs = 300) {
+            // --- Driver marker tween (keep 1 version only) ---
+            let tweenHandle = null;
+            function tweenDriverTo(lat, lng, durationMs = 320) {
               if (!driverMarker) {
-                // place first if needed (no reframe)
-                setDriver(lat, lng);
+                driverMarker = L.marker([lat, lng]).addTo(map);
                 return;
               }
-              if (driverTweenHandle) cancelAnimationFrame(driverTweenHandle);
-
+              if (tweenHandle) cancelAnimationFrame(tweenHandle);
               const start = driverMarker.getLatLng();
               const end = L.latLng(lat, lng);
               const t0 = performance.now();
-
               const step = (t) => {
                 const p = Math.min(1, (t - t0) / durationMs);
                 const latI = start.lat + (end.lat - start.lat) * p;
                 const lngI = start.lng + (end.lng - start.lng) * p;
                 driverMarker.setLatLng([latI, lngI]);
-                if (p < 1) driverTweenHandle = requestAnimationFrame(step);
+                if (p < 1) tweenHandle = requestAnimationFrame(step);
               };
-              driverTweenHandle = requestAnimationFrame(step);
+              tweenHandle = requestAnimationFrame(step);
             }
-
-            function tweenDriverTo(lat, lng, durationMs = 300) { 
-              if (!driverMarker) { 
-                driverMarker = L.marker([lat, lng]).addTo(map); 
-                return; 
-              } 
-              if (tweenHandle) cancelAnimationFrame(tweenHandle); 
-              const start = driverMarker.getLatLng(); 
-              const end = L.latLng(lat, lng); 
-              const t0 = performance.now(); 
-              const step = (t) => { 
-                const p = Math.min(1, (t - t0) / durationMs); 
-                const latI = start.lat + (end.lat - start.lat) * p; 
-                const lngI = start.lng + (end.lng - start.lng) * p; 
-                driverMarker.setLatLng([latI, lngI]); 
-                if (p < 1) tweenHandle = requestAnimationFrame(step); 
-              }; 
-              tweenHandle = requestAnimationFrame(step); 
-            }
-
 
             function formatDuration(sec){
               if (sec < 60) return Math.round(sec) + "s";
@@ -104,7 +138,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
               maxBoundsViscosity: 0.5,
               minZoom: 13,
               maxZoom: 18,
-              noWrap: true 
+              noWrap: true
             }).setView([${initialLat}, ${initialLng}], 15)
               .fitBounds([[13.96, 121.643], [13.88,121.588]]);
 
@@ -114,6 +148,34 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
             }).addTo(map);
 
             driverMarker = L.marker([${initialLat}, ${initialLng}]).addTo(map);
+
+            // ✅ helpers to clear layers
+            function clearLayer(layerRefName){
+              try {
+                if (layerRefName && map.hasLayer(layerRefName)) map.removeLayer(layerRefName);
+              } catch {}
+            }
+
+            function resetPwappLayer(){
+              if (pwappLayer) { pwappLayer.clearLayers(); map.removeLayer(pwappLayer); }
+              pwappLayer = L.layerGroup().addTo(map);
+            }
+
+            function resetTaskLayer(){
+              if (taskLayer) { taskLayer.clearLayers(); map.removeLayer(taskLayer); }
+              taskLayer = L.layerGroup().addTo(map);
+
+              if (taskOrderLine) { map.removeLayer(taskOrderLine); taskOrderLine = null; }
+            }
+
+            // ✅ Task marker factory (numbered)
+            function makeTaskIcon(orderNum, taskType, isActive){
+              const t = String(taskType || '').toUpperCase();
+              const clsType = (t === 'PICKUP') ? 'task-pickup' : 'task-dropoff';
+              const clsActive = isActive ? 'task-active' : '';
+              const html = '<div class="task-pin ' + clsType + ' ' + clsActive + '">' + String(orderNum) + '</div>';
+              return L.divIcon({ className: '', html, iconSize: [26,26], iconAnchor: [13,13] });
+            }
 
             document.addEventListener('message', function(event) {
               const msg = JSON.parse(event.data);
@@ -141,27 +203,22 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                     })
                   }).addTo(map).bindTooltip("🎯 Destination", { permanent: true, direction: "top" });
                 }
+                return;
               }
 
               if (msg.type === 'updateDriver') {
                 const lat = Number(msg.latitude), lng = Number(msg.longitude);
-
-                // reject obviously-bad points
                 if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-                // optional: ignore tiny jitters
                 if (driverMarker) {
                   const curr = driverMarker.getLatLng();
                   const dLat = Math.abs(curr.lat - lat);
                   const dLng = Math.abs(curr.lng - lng);
-                  if (dLat < 1e-5 && dLng < 1e-5) return; // ~1m-ish
+                  if (dLat < 1e-5 && dLng < 1e-5) return;
                 }
-
                 tweenDriverTo(lat, lng, 320);
                 return;
               }
-
-
 
               if (msg.type === 'drawRoute') {
                 if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
@@ -179,11 +236,13 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                   .addTo(map)
                   .bindTooltip(km + " km • " + eta, { permanent: true, direction: "top" })
                   .openTooltip();
+                return;
               }
 
               if (msg.type === 'clearRoute') {
                 if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
                 if (midTooltipMarker) { map.removeLayer(midTooltipMarker); midTooltipMarker = null; }
+                return;
               }
 
               if (msg.type === 'setWaitingMarkers') {
@@ -193,13 +252,11 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                 var items = Array.isArray(msg.items) ? msg.items : [];
                 items.forEach(function(it) {
                   var marker = L.marker([it.lat, it.lng], {
-                    icon: L.icon({
-                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/yellow-dot.png',
-                      iconSize: [30, 30],
-                    })
+                    icon: iconForBookingType(it.bookingType),
                   })
                   .addTo(waitingLayer)
-                  .bindTooltip('🧍 Passenger #' + it.id, { direction: 'top' });
+                  .bindTooltip('🧍 ' + (it.bookingType || 'CLASSIC') + ' #' + it.id, { direction: 'top' });
+
                   marker.on('click', function() {
                     window.ReactNativeWebView.postMessage(JSON.stringify({
                       type: 'waitingMarkerTapped',
@@ -207,6 +264,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                     }));
                   });
                 });
+                return;
               }
 
               if (msg.type === 'setTodaZones') {
@@ -220,7 +278,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                 zones.forEach(function(z) {
                   var circle = L.circle([z.lat, z.lng], {
                     radius: z.radius || 100,
-                    stroke: false,     
+                    stroke: false,
                     fillColor: '#3388ff',
                     fillOpacity: 0.15,
                   }).addTo(todaLayer);
@@ -232,6 +290,58 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                     });
                   }
                 });
+                return;
+              }
+
+              // ✅ NEW: pwApp pickup pins
+              if (msg.type === 'setPwAppMarkers') {
+                resetPwappLayer();
+                var items = Array.isArray(msg.items) ? msg.items : [];
+                items.forEach(function(p) {
+                  var marker = L.marker([p.lat, p.lng], {
+                    icon: L.divIcon({ className: '', html: '<div class="pwapp-pin">🚶</div>', iconSize:[26,26], iconAnchor:[13,13] })
+                  })
+                  .addTo(pwappLayer)
+                  .bindTooltip('pwApp • ' + (p.passengerType || 'REGULAR') + (p.note ? (' • ' + p.note) : ''), { direction:'top' });
+                });
+                return;
+              }
+
+              // ✅ NEW: ordered task plan (which pickup first / dropoff first)
+              // Expected:
+              // { type:'setTaskPlan', tasks:[{id,lat,lng,taskType,label,status}], activeTaskId:'...' }
+              if (msg.type === 'setTaskPlan') {
+                resetTaskLayer();
+
+                var tasks = Array.isArray(msg.tasks) ? msg.tasks : [];
+                var activeTaskId = msg.activeTaskId ? String(msg.activeTaskId) : null;
+
+                // Draw markers
+                var linePts = [];
+                tasks.forEach(function(t, idx){
+                  var lat = Number(t.lat), lng = Number(t.lng);
+                  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+                  var id = String(t.id || t._id || idx);
+                  var isActive = activeTaskId && String(activeTaskId) === id || String(t.status||'').toUpperCase() === 'ACTIVE';
+
+                  var icon = makeTaskIcon(idx + 1, t.taskType, isActive);
+
+                  var title = (String(t.taskType||'').toUpperCase() === 'PICKUP') ? 'Pickup' : 'Dropoff';
+                  var label = t.label ? String(t.label) : (lat.toFixed(4) + ', ' + lng.toFixed(4));
+
+                  var marker = L.marker([lat, lng], { icon: icon })
+                    .addTo(taskLayer)
+                    .bindTooltip((idx+1) + ') ' + title + ' • ' + label, { direction:'top' });
+
+                  linePts.push([lat, lng]);
+                });
+
+                // Draw faint order line (optional)
+                if (linePts.length >= 2) {
+                  taskOrderLine = L.polyline(linePts, { weight: 3, opacity: 0.6, dashArray: '6 8' }).addTo(map);
+                }
+                return;
               }
 
             });

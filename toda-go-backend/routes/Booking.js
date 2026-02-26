@@ -10,6 +10,7 @@ const RideHistory = require("../models/RideHistory");
 const Booking = require("../models/Bookings");
 const Driver = require("../models/Drivers");
 const Toda = require("../models/Toda");
+const Task = require("../models/Task");
 const DEBUG_WAITING = true; 
 
 
@@ -33,12 +34,6 @@ async function sendPush(to, title, body, extra = {}) {
     });
 
     const json = await resp.json().catch(() => null);
-
-    console.log("📨 Expo push response:", {
-      status: resp.status,
-      ok: resp.ok,
-      body: json,
-    });
   } catch (err) {
     console.error("❌ Push send failed:", err);
   }
@@ -1396,7 +1391,47 @@ router.post("/accept-booking", async (req, res) => {
     // 🔄 Return fresh booking
     const fresh = await Booking.findOne({ bookingId }).lean();
 
-    // 🔔 NEW: send push notification to passenger
+
+// ✅ Create driver tasks (Pickup + Dropoff) for task-based routing UI
+// Idempotent: only create if tasks do not already exist for this booking
+try {
+  if (fresh) {
+    const existingCount = await Task.countDocuments({
+      sourceType: "BOOKING",
+      sourceId: fresh.bookingId,
+    });
+    if (existingCount === 0) {
+      const pickupTask = await Task.create({
+        driverId: String(driverId),
+        sourceType: "BOOKING",
+        sourceId: fresh.bookingId,
+        taskType: "PICKUP",
+        lat: Number(fresh.pickupLat),
+        lng: Number(fresh.pickupLng),
+        place: fresh.pickupPlace || "",
+        status: "ACTIVE",
+        meta: { passengerId: String(fresh.passengerId || "") },
+      });
+
+      await Task.create({
+        driverId: String(driverId),
+        sourceType: "BOOKING",
+        sourceId: fresh.bookingId,
+        taskType: "DROPOFF",
+        lat: Number(fresh.destinationLat),
+        lng: Number(fresh.destinationLng),
+        place: fresh.destinationPlace || "",
+        dependsOnTaskId: pickupTask._id,
+        status: "PENDING",
+        meta: { passengerId: String(fresh.passengerId || "") },
+      });
+    }
+  }
+} catch (e) {
+  console.warn("Task creation failed:", e?.message || e);
+}
+
+    // 🔔 NEW: send push notification to passenger  
     try {
       if (fresh && fresh.passengerId) {
         const passenger = await Passenger.findById(fresh.passengerId).select(
@@ -1412,12 +1447,7 @@ router.post("/accept-booking", async (req, res) => {
               driverId: String(driverId),
             }
           );
-        } else {
-          console.log(
-            "ℹ️ No pushToken for passenger",
-            String(fresh.passengerId)
-          );
-        }
+        } else {}
       }
     } catch (err) {
       console.error("❌ Error sending accept-booking push:", err);
@@ -1479,9 +1509,7 @@ router.post("/cancel-booking", async (req, res) => {
               passengerId: String(b.passengerId || ""),
             }
           );
-        } else {
-          console.log("ℹ️ No pushToken for driver", String(b.driverId));
-        }
+        } else {}
       }
     } catch (err) {
       console.error("❌ Error sending cancel notification to driver:", err);
@@ -1585,12 +1613,7 @@ router.post("/complete-booking", async (req, res) => {
               driverId: String(updated.driverId || ""),
             }
           );
-        } else {
-          console.log(
-            "ℹ️ No pushToken for passenger",
-            String(updated.passengerId)
-          );
-        }
+        } else {}
       }
     } catch (err) {
       console.error("❌ Error sending complete-booking push:", err);
@@ -1641,7 +1664,6 @@ router.post("/driver/push-token", async (req, res) => {
       { pushToken },
       { new: true }
     );
-    console.log(pushToken)
 
     res.json({ ok: true });
   } catch (e) {

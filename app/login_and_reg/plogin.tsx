@@ -8,6 +8,7 @@ import { useRouter } from "expo-router";
 import { API_BASE_URL } from "../../config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { saveAuth } from "../utils/authStorage";
+import { fetchRestriction, isRestrictionActive } from "../utils/restriction";
 
 const { width } = Dimensions.get("window");
 
@@ -72,21 +73,65 @@ export default function PLogin() {
         );
       }
 
-      const passengerId =
-        data?.userId || data?.passenger?._id || data?.user?._id || data?._id;
+      const passengerId = data?.userId || data?.passenger?._id || data?.user?._id || data?._id;
 
       if (!passengerId)
         throw new Error("Login succeeded but no passengerId returned");
 
-      // await saveAuth({
-      //   role: "passenger",
-      //   userId: String(passengerId),
-      //   token: data?.token,
-      // });
+      // ✅ find token key from backend response
+      const token =
+        data?.token || data?.accessToken || data?.jwt || data?.authToken;
+
+      console.log("✅ [PLOGIN] passengerId:", passengerId);
+      console.log("✅ [PLOGIN] token exists?:", !!token);
+      console.log("✅ [PLOGIN] keys:", Object.keys(data || {}));
+
+      // ✅ store ids
       await AsyncStorage.setItem("passengerId", String(passengerId));
+
+      // ✅ store token (important for protected routes like notifications)
+      if (token) {
+        await AsyncStorage.setItem("token", String(token));
+      } else {
+        // Not fatal for login, but will break protected endpoints
+        console.log("⚠️ [PLOGIN] No token returned from backend!");
+      }
+
+      const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      const infoText = await infoRes.text();
+      let info: any = null;
+      try {
+        info = infoText ? JSON.parse(infoText) : null;
+      } catch {}
+
+      const passenger = info?.passenger || null;
+      const r = passenger?.restriction || null;
+
+      const isRestricted = !!r?.isRestricted;
+      const endAt = r?.endAt ? new Date(r.endAt).getTime() : null;
+      const active = isRestricted && (!endAt || endAt > Date.now());
+
+      if (active) {
+        router.replace({
+          pathname: "/restriction",
+          params: {
+            userType: "passenger",
+            name: passenger?.firstName ? `${passenger.firstName} ${passenger.lastName || ""}`.trim() : "Passenger",
+            type: r?.type || "ban",
+            reason: r?.reason || "",
+            endAt: r?.endAt ? String(r.endAt) : "",
+          },
+        });
+        return;
+      }
 
       Alert.alert("Login Successful", "Welcome!");
       router.replace("../homepassenger/phome");
+
+
     } catch (error: any) {
       if (error?.name === "AbortError") {
         console.log("[login] fetch aborted (backend slow or cold start?)");

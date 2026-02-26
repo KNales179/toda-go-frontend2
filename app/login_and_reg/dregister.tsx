@@ -67,6 +67,8 @@ export default function DriverRegister() {
   const [driversLicenseImage, setDriversLicenseImage] = useState<ImagePickerAsset | null>(null);
   const [orcrImage, setOrcrImage] = useState<ImagePickerAsset | null>(null);
   const [selfieImage, setSelfieImage] = useState<ImagePickerAsset | null>(null);
+  const [plateNumber, setPlateNumber] = useState("");
+
 
 
   // picker choices
@@ -211,6 +213,8 @@ export default function DriverRegister() {
       formData.append("experienceYears", experienceYears);
       formData.append("capacity", String(capacity));
       formData.append("trikeColor", trikeColor ?? "");  
+      formData.append("plateNumber", plateNumber);
+
       
 
       // 📩 Email/password handling:
@@ -469,7 +473,14 @@ export default function DriverRegister() {
             </View>
           </View>
         </View>
-        
+        <TextInput
+          style={[styles.input, { color: plateNumber ? "#000" : "#888" }]}
+          placeholder="Plate Number (LTO)"
+          placeholderTextColor="#A0A0A0"
+          value={plateNumber}
+          onChangeText={setPlateNumber}
+          autoCapitalize="characters"
+        />
 
 
 

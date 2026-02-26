@@ -1,5 +1,5 @@
 // app/homedriver/dprofile.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { API_BASE_URL } from "../../config";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 
 const { width } = Dimensions.get("window");
@@ -24,7 +24,7 @@ type WindowKey = "today" | "7d" | "30d" | "overall";
 type ReportKey = "day" | "week" | "month" | "overall";
 
 const monthNames = [
-  "", // placeholder for index 0
+  "",
   "Jan",
   "Feb",
   "Mar",
@@ -54,11 +54,10 @@ function shortMoney(n: number) {
 }
 
 function formatDayLabel(dateStr: string) {
-  // expects "YYYY-MM-DD" from backend summary.daily
   if (!dateStr || typeof dateStr !== "string") return "";
   const [y, m, d] = dateStr.split("-");
   if (!m || !d) return dateStr;
-  return `${m}/${d}`; // MM/DD
+  return `${m}/${d}`;
 }
 
 export default function DProfile() {
@@ -73,6 +72,7 @@ export default function DProfile() {
     ratingCount: number;
     totalTrips: number;
   } | null>(null);
+
   const [kpis, setKpis] = useState<any>(null);
   const [daily, setDaily] = useState<any[]>([]);
   const [monthly, setMonthly] = useState<any[]>([]);
@@ -80,7 +80,10 @@ export default function DProfile() {
 
   const [win, setWin] = useState<WindowKey>("7d");
   const [reportWin, setReportWin] = useState<ReportKey>("day");
-  const [menuOpen, setMenuOpen] = useState(false); // android fallback
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // ✅ unseen notifications
+  const [unseenCount, setUnseenCount] = useState(0);
 
   // ---- load driver id ----
   useEffect(() => {
@@ -124,7 +127,41 @@ export default function DProfile() {
     setReportRows(j.rows || []);
   };
 
-  // initial load
+  // ✅ notifications fetch (stable callback)
+  const fetchUnseenCount = useCallback(async () => {
+    try {
+      const id = await AsyncStorage.getItem("driverId");
+      const token = await AsyncStorage.getItem("driverToken");
+
+      if (!id || !token) {
+        setUnseenCount(0);
+        return;
+      }
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/notifications?userType=driver&userId=${encodeURIComponent(
+          id
+        )}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!res.ok) {
+        setUnseenCount(0);
+        return;
+      }
+
+      const data = await res.json();
+      const list = Array.isArray(data?.items) ? data.items : [];
+      setUnseenCount(list.filter((n: any) => !n.seenAt).length);
+    } catch {
+      setUnseenCount(0);
+    }
+  }, []);
+
+  // initial load for stats
   useEffect(() => {
     if (!driverId) return;
     (async () => {
@@ -154,10 +191,25 @@ export default function DProfile() {
     fetchReport(driverId, reportWin).catch(() => {});
   }, [reportWin, driverId]);
 
+  // ✅ refresh unseen when screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      fetchUnseenCount();
+    }, [fetchUnseenCount])
+  );
+
+  // ✅ optional: auto refresh every 10s while profile is alive
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetchUnseenCount();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [fetchUnseenCount]);
+
   // ---- logout (AsyncStorage only) ----
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem("driverId");
+      await AsyncStorage.multiRemove(["driverId", "driverToken"]); // ✅ your request
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("../../login_and_reg/dlogin");
     } catch (error: any) {
@@ -208,12 +260,39 @@ export default function DProfile() {
           </View>
         </View>
 
-        <TouchableOpacity
-          onPress={openMenu}
-          hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
-        >
-          <Ionicons name="ellipsis-vertical" size={24} color="#222" />
-        </TouchableOpacity>
+        {/* ✅ Bell + menu (your exact layout) */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate("dnotifications")}
+            hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
+          >
+            <View style={{ position: "relative" }}>
+              <Ionicons name="notifications" size={24} color="#222" />
+              {unseenCount > 0 && (
+                <View
+                  style={{
+                    position: "absolute",
+                    top: -2,
+                    right: -2,
+                    width: 10,
+                    height: 10,
+                    borderRadius: 99,
+                    backgroundColor: "#d11a2a",
+                    borderWidth: 2,
+                    borderColor: "#fff",
+                  }}
+                />
+              )}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={openMenu}
+            hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}
+          >
+            <Ionicons name="ellipsis-vertical" size={24} color="#222" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
@@ -241,10 +320,7 @@ export default function DProfile() {
         <View style={styles.kpiRow}>
           <KPI label="Income" value={`₱ ${fmtMoney(kpis?.income)}`} />
           <KPI label="Trips" value={kpis?.trips ?? 0} />
-          <KPI
-            label="Hours"
-            value={`${(kpis?.hoursOnline ?? 0).toFixed(1)}h`}
-          />
+          <KPI label="Hours" value={`${(kpis?.hoursOnline ?? 0).toFixed(1)}h`} />
         </View>
         <View style={styles.kpiRow}>
           <KPI label="Avg Fare" value={`₱ ${fmtMoney(kpis?.avgFare)}`} />
@@ -315,6 +391,7 @@ export default function DProfile() {
             >
               <Text style={styles.sheetItemTxt}>Settings</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.sheetItem}
               onPress={() => {
@@ -333,7 +410,7 @@ export default function DProfile() {
   );
 }
 
-// --- small UI helpers (no external chart lib; lightweight visuals) ---
+// --- small UI helpers ---
 function KPI({ label, value }: { label: string; value: any }) {
   return (
     <View style={styles.kpi}>
@@ -351,17 +428,8 @@ function MiniBars({ data }: { data: { month: number; income: number }[] }) {
   const ticks = [0, max / 2, max];
 
   return (
-    <View
-      style={{ flexDirection: "row", marginHorizontal: 20, marginBottom: 4 }}
-    >
-      {/* Y axis with labels */}
-      <View
-        style={{
-          width: 40,
-          height: chartHeight,
-          justifyContent: "space-between",
-        }}
-      >
+    <View style={{ flexDirection: "row", marginHorizontal: 20, marginBottom: 4 }}>
+      <View style={{ width: 40, height: chartHeight, justifyContent: "space-between" }}>
         {ticks
           .slice()
           .reverse()
@@ -372,13 +440,7 @@ function MiniBars({ data }: { data: { month: number; income: number }[] }) {
           ))}
       </View>
 
-      {/* Bars */}
-      <View
-        style={[
-          styles.barsWrap,
-          { height: chartHeight, flex: 1, paddingHorizontal: 0 },
-        ]}
-      >
+      <View style={[styles.barsWrap, { height: chartHeight, flex: 1, paddingHorizontal: 0 }]}>
         {data.map((d, i) => {
           const h = Math.max(4, (chartHeight * d.income) / max);
           const monthLabel =
@@ -396,13 +458,7 @@ function MiniBars({ data }: { data: { month: number; income: number }[] }) {
   );
 }
 
-function MiniLine({
-  data,
-  metric,
-}: {
-  data: any[];
-  metric: "income" | "trips";
-}) {
+function MiniLine({ data, metric }: { data: any[]; metric: "income" | "trips" }) {
   if (!data || !data.length) return <Text style={styles.empty}>No data</Text>;
 
   const vals = data.map((d) => Number(d[metric] || 0));
@@ -427,21 +483,11 @@ function MiniLine({
           const barWidth = Math.max(2, W / data.length - 4);
 
           const shouldLabel =
-            data.length <= 10 ||
-            i === 0 ||
-            i === data.length - 1 ||
-            i % 7 === 0;
+            data.length <= 10 || i === 0 || i === data.length - 1 || i % 7 === 0;
           const label = shouldLabel ? formatDayLabel(d.date) : "";
 
           return (
-            <View
-              key={i}
-              style={{
-                alignItems: "center",
-                width: barWidth,
-                marginHorizontal: 2,
-              }}
-            >
+            <View key={i} style={{ alignItems: "center", width: barWidth, marginHorizontal: 2 }}>
               <View
                 style={{
                   width: "100%",
@@ -465,17 +511,12 @@ function MiniLine({
   );
 }
 
-// formatters for table
 function formatCell(row: any) {
   if (row.key === "income") return `₱ ${fmtMoney(row.value)}`;
-  if (row.key === "distance")
-    return `${Number(row.value || 0).toFixed(1)} km`;
-  if (row.key === "avgRating")
-    return `${Number(row.value || 0).toFixed(2)} ★`;
-  if (row.key === "hoursOnline")
-    return `${Number(row.value || 0).toFixed(1)} h`;
-  if (row.key === "acceptance" || row.key === "cancellation")
-    return `${pct(row.value)}%`;
+  if (row.key === "distance") return `${Number(row.value || 0).toFixed(1)} km`;
+  if (row.key === "avgRating") return `${Number(row.value || 0).toFixed(2)} ★`;
+  if (row.key === "hoursOnline") return `${Number(row.value || 0).toFixed(1)} h`;
+  if (row.key === "acceptance" || row.key === "cancellation") return `${pct(row.value)}%`;
   return String(row.value ?? "—");
 }
 
@@ -545,24 +586,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     marginHorizontal: 10,
   },
-  barCol: {
-    alignItems: "center",
-    justifyContent: "flex-end",
-    flex: 1,
-  },
+  barCol: { alignItems: "center", justifyContent: "flex-end", flex: 1 },
   bar: { width: 12, backgroundColor: "#5089A3", borderRadius: 4 },
   barLabel: { fontSize: 10, color: "#666", marginTop: 4 },
 
-  yAxisLabel: {
-    fontSize: 10,
-    color: "#888",
-    textAlign: "right",
-  },
-  barSmallLabel: {
-    fontSize: 9,
-    color: "#666",
-    marginTop: 2,
-  },
+  yAxisLabel: { fontSize: 10, color: "#888", textAlign: "right" },
+  barSmallLabel: { fontSize: 9, color: "#666", marginTop: 2 },
 
   reportHeader: {
     marginTop: 12,
@@ -603,7 +632,6 @@ const styles = StyleSheet.create({
 
   empty: { marginHorizontal: 20, color: "#888" },
 
-  // android sheet
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",

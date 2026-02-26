@@ -24,6 +24,65 @@ const passengerSchema = new mongoose.Schema({
   profileImagePublicId: { type: String },
   homeAddress: { type:String },
   pushToken: { type: String },
+  discount: { type: Boolean, default: false },
+  discountType: {
+    type: String,
+    enum: ["Student", "Senior Citizen", "PWD", null],
+    default: null,
+  },
+
+
+  discountVerification: {
+    type: {
+      type: String,
+      enum: ["Student", "Senior Citizen", "PWD"],
+      default: null,
+    },
+
+    // Required only when type === "Student"
+    schoolYear: {
+      type: String, // example: "2025-2026"
+      default: null,
+    },
+
+    // system computed
+    validUntil: {
+      type: Date,
+      default: null,
+    },
+
+    // status lifecycle
+    status: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+    },
+
+    // evidence images stored in Cloudinary
+    idFrontUrl: { type: String, default: null },
+    idFrontPublicId: { type: String, default: null },
+
+    idBackUrl: { type: String, default: null },
+    idBackPublicId: { type: String, default: null },
+
+    // admin will fill these later (not now, but schema-ready)
+    submittedAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedByAdminId: { type: String, default: null },
+
+    rejectionReason: { type: String, default: null },
+  },
+
+  restriction: {
+    isRestricted: { type: Boolean, default: false },
+    type: { type: String, enum: ["ban", "suspend"], default: "ban" },
+    reason: { type: String, default: "" },
+    startAt: { type: Date, default: null },
+    endAt: { type: Date, default: null },
+    createdByAdminId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    updatedAt: { type: Date, default: null },
+  },
+
 
   // From original app
   email: { type: String, unique: true, required: true },

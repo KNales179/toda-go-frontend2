@@ -9,6 +9,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { API_BASE_URL } from "../../config";
+import * as Print from "expo-print";
+import * as FileSystem from "expo-file-system";
 
 const { width } = Dimensions.get("window");
 
@@ -45,13 +47,20 @@ type RideItem = {
 
 export default function DHistory() {
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [driverName, setDriverName] = useState<string>("");
   const [allItems, setAllItems] = useState<RideItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [visible, setVisible] = useState(10);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // report modal stubs (if you want same functionality as PHistory)
+  // PDF download modal
+  const [dlOpen, setDlOpen] = useState(false);
+  const [dlMode, setDlMode] = useState<"all" | "month" | "year">("all");
+  const [dlYear, setDlYear] = useState<number>(new Date().getFullYear());
+  const [dlMonth, setDlMonth] = useState<number>(new Date().getMonth() + 1);
+
+  // report modal stubs (unused)
   const [reportOpen, setReportOpen] = useState<{ id: string | null; bookingId?: string }>({ id: null });
   const [reportType, setReportType] = useState("");
   const [otherReport, setOtherReport] = useState("");
@@ -65,8 +74,47 @@ export default function DHistory() {
       const id = (await AsyncStorage.getItem("driverId")) || (await AsyncStorage.getItem("userId"));
       setDriverId(id || null);
       console.log("[DHistory] loaded driverId:", id);
+
+      if (!id) return;
+
+      // Try common driver endpoints (adjust if your backend uses a different route)
+      const base = API_BASE_URL.replace(/\/$/, "");
+      const candidates = [
+        `${base}/drivers/${id}`,
+        `${base}/api/drivers/${id}`,
+        `${base}/driver/${id}`,
+        `${base}/api/driver/${id}`,
+      ];
+
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
+          if (!res.ok) continue;
+          const data = await res.json();
+
+          // Accept several possible fields
+          const name =
+            data?.driverName ||
+            data?.name ||
+            [data?.driverFirstName, data?.driverMiddleName, data?.driverLastName]
+              .filter(Boolean)
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim();
+
+          if (name) {
+            setDriverName(String(name));
+            console.log("[DHistory] loaded driverName:", name);
+            break;
+          }
+        } catch (e) {
+          // ignore, try next url
+        }
+      }
     })();
   }, []);
+
+  
 
   const php = (n: number) =>
     new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
@@ -94,12 +142,8 @@ export default function DHistory() {
     if (!key) return null;
 
     const cached = reverseCache.current.get(key);
-    if (cached) {
-      console.log("[DHistory][geocodeCoord] cache HIT:", key, "->", cached);
-      return cached;
-    }
+    if (cached) return cached;
 
-    console.log("[DHistory][geocodeCoord] cache MISS, calling reverseGeocodeAsync for:", key);
     try {
       const res = await Location.reverseGeocodeAsync({ latitude: lat!, longitude: lng! });
       if (Array.isArray(res) && res.length > 0) {
@@ -111,18 +155,12 @@ export default function DHistory() {
         ].filter(Boolean);
         const label = pieces.join(", ") || `${lat!.toFixed(5)}, ${lng!.toFixed(5)}`;
         reverseCache.current.set(key, label);
-        console.log("[DHistory][geocodeCoord] success:", key, "->", label);
         return label;
-      } else {
-        console.warn("[DHistory][geocodeCoord] reverseGeocodeAsync returned empty for:", key);
       }
-    } catch (e) {
-      console.warn("[DHistory][geocodeCoord] reverse geocode failed for", key, e);
-    }
+    } catch {}
 
     const coordLabel = `${lat!.toFixed(5)}, ${lng!.toFixed(5)}`;
     reverseCache.current.set(key, coordLabel);
-    console.log("[DHistory][geocodeCoord] fallback to coord label:", key, "->", coordLabel);
     return coordLabel;
   };
 
@@ -166,7 +204,6 @@ export default function DHistory() {
     });
 
   const resolvePlaceNames = async (items: RideItem[]) => {
-    console.log("[DHistory][resolvePlaceNames] start, items:", items.length);
     const tasks: Array<() => Promise<{ id: string; pickupLabel?: string; destinationLabel?: string }>> = [];
 
     for (const it of items) {
@@ -176,27 +213,12 @@ export default function DHistory() {
 
       tasks.push(async () => {
         const out: any = { id: it._id };
-        if (needsPickup) {
-          try {
-            const lbl = await geocodeCoord(it.pickupLat, it.pickupLng);
-            out.pickupLabel = lbl || (it.pickupPlace || "Pickup location");
-          } catch (e) {
-            out.pickupLabel = it.pickupPlace || "Pickup location";
-          }
-        }
-        if (needsDest) {
-          try {
-            const lbl = await geocodeCoord(it.destinationLat, it.destinationLng);
-            out.destinationLabel = lbl || (it.destinationPlace || "Destination");
-          } catch (e) {
-            out.destinationLabel = it.destinationPlace || "Destination";
-          }
-        }
+        if (needsPickup) out.pickupLabel = (await geocodeCoord(it.pickupLat, it.pickupLng)) || (it.pickupPlace || "Pickup location");
+        if (needsDest) out.destinationLabel = (await geocodeCoord(it.destinationLat, it.destinationLng)) || (it.destinationPlace || "Destination");
         return out;
       });
     }
 
-    console.log("[DHistory][resolvePlaceNames] tasks queued:", tasks.length);
     if (tasks.length === 0) return;
 
     const CONCURRENCY = 5;
@@ -206,19 +228,11 @@ export default function DHistory() {
     const runner = async () => {
       while (idx < tasks.length) {
         const i = idx++;
-        try {
-          const r = await tasks[i]();
-          results.push(r);
-          console.log("[DHistory][resolvePlaceNames] task done for id:", r.id);
-        } catch (e) {
-          console.warn("[DHistory][resolvePlaceNames] task error", e);
-        }
+        try { results.push(await tasks[i]()); } catch {}
       }
     };
 
-    const workers = [];
-    for (let i = 0; i < CONCURRENCY; i++) workers.push(runner());
-    await Promise.all(workers);
+    await Promise.all(Array.from({ length: CONCURRENCY }, runner));
 
     if (results.length === 0) return;
 
@@ -236,12 +250,10 @@ export default function DHistory() {
         destinationLabel: e.destinationLabel ?? e.destinationPlace ?? "Destination",
       }));
     });
-
-    console.log("[DHistory][resolvePlaceNames] done and state updated");
   };
 
   const fetchAll = useCallback(async () => {
-    if (!driverId) { setLoading(false); setRefreshing(false); console.log("[DHistory][fetchAll] no driverId, abort"); return; }
+    if (!driverId) { setLoading(false); setRefreshing(false); return; }
     try {
       setLoading(true);
       const base = API_BASE_URL.replace(/\/$/, "");
@@ -253,42 +265,32 @@ export default function DHistory() {
       ];
       let got: RideItem[] | null = null;
 
-      console.log("[DHistory][fetchAll] trying endpoints:", paths);
       for (let i = 0; i < paths.length; i++) {
         const url = `${base}${paths[i]}`;
         const filterLocally = i >= 2;
         try {
-          console.log("[DHistory][fetchAll] fetching:", url);
           const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
           const text = await res.text();
           let data: any;
-          try { data = JSON.parse(text); } catch {
-            console.warn("[DHistory][fetchAll] response not JSON from", url);
-            continue;
-          }
+          try { data = JSON.parse(text); } catch { continue; }
           let raw: any[] = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
           if (filterLocally) raw = raw.filter((x: any) => String(x.driverId) === String(driverId));
           got = normalize(raw);
-          console.log("[DHistory][fetchAll] success from:", url, "items:", got.length);
           break;
-        } catch (e) {
-          console.warn("[DHistory][fetchAll] fetch failed for", paths[i], e);
-        }
+        } catch {}
       }
 
       if (!got) got = [];
       setAllItems(got);
       setVisible(Math.min(10, got.length));
 
-      // Force geocoding for any item that has coords (either fields or parsed from label)
       const itemsWithCoords = got.filter(it =>
         (it.pickupLat != null && it.pickupLng != null) ||
         (it.destinationLat != null && it.destinationLng != null)
       );
-      console.log("[DHistory][fetchAll] items with coords:", itemsWithCoords.length);
 
       if (itemsWithCoords.length > 0) {
-        resolvePlaceNames(itemsWithCoords).catch((e) => console.warn("[DHistory][fetchAll] resolvePlaceNames failed", e));
+        resolvePlaceNames(itemsWithCoords).catch(() => {});
       } else {
         setAllItems((prev) => prev.map(p => ({
           ...p,
@@ -299,7 +301,6 @@ export default function DHistory() {
     } finally {
       setLoading(false);
       setRefreshing(false);
-      console.log("[DHistory][fetchAll] finished");
     }
   }, [driverId]);
 
@@ -309,6 +310,240 @@ export default function DHistory() {
     setRefreshing(true);
     fetchAll();
   }, [fetchAll]);
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+
+  const formatDateShort = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" });
+  };
+
+  const formatDateRangeLabel = (mode: "all" | "month" | "year", year?: number, month?: number) => {
+    if (mode === "all") return "All Time";
+    if (mode === "year") return `Year ${year}`;
+    const d = new Date(year!, (month ?? 1) - 1, 1);
+    const m = d.toLocaleDateString("en-PH", { month: "long" });
+    return `${m} ${year}`;
+  };
+
+  const filterByRange = (items: RideItem[], mode: "all" | "month" | "year", year?: number, month?: number) => {
+    if (mode === "all") return items;
+    return items.filter((it) => {
+      const d = new Date(it.createdAt);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      if (mode === "year") return y === year;
+      if (mode === "month") return y === year && m === month;
+      return true;
+    });
+  };
+
+  const computeTotals = (items: RideItem[]) => {
+    let trips = items.length;
+    let soloTrips = 0;
+    let groupTrips = 0;
+    let paxTotal = 0;
+    let gross = 0;
+
+    for (const it of items) {
+      const perFare = it.fare ?? 0;
+      const pax = it.groupCount ?? 1;
+      const isGroup = String(it.bookingType || "").toLowerCase() === "group";
+
+      if (isGroup) groupTrips++;
+      else soloTrips++;
+
+      paxTotal += isGroup ? pax : 1;
+
+      const total = it.totalFare != null ? it.totalFare : (isGroup ? perFare * pax : perFare);
+      gross += Number(total || 0);
+    }
+
+    return { trips, soloTrips, groupTrips, paxTotal, gross };
+  };
+
+  const esc = (s: any) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const buildReportHTML = (items: RideItem[], rangeLabel: string, driverIdStr: string) => {
+    const now = new Date();
+    const printedAt = now.toLocaleString("en-PH", {
+      year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+
+    const totals = computeTotals(items);
+    const sorted = [...items].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+
+    const rows = sorted
+      .map((it, idx) => {
+        const pickup = it.pickupLabel || it.pickupPlace || "Pickup location";
+        const dest = it.destinationLabel || it.destinationPlace || "Destination";
+
+        const perFare = it.fare ?? 0;
+        const pax = it.groupCount ?? 1;
+        const isGroup = String(it.bookingType || "").toLowerCase() === "group";
+        const total = it.totalFare != null ? it.totalFare : isGroup ? perFare * pax : perFare;
+
+        return `
+          <tr>
+            <td class="c">${idx + 1}</td>
+            <td>${esc(formatDateShort(it.createdAt))}</td>
+            <td>${esc(String(it.bookingType || "—").toUpperCase())}</td>
+            <td>${esc(pickup)}</td>
+            <td>${esc(dest)}</td>
+            <td class="c">${isGroup ? pax : 1}</td>
+            <td class="r">${esc(php(Number(perFare || 0)))}</td>
+            <td class="r">${esc(php(Number(total || 0)))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    return `
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body { font-family: Arial, sans-serif; color: #111; font-size: 12px; }
+        .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 12px; }
+        .title { font-size: 18px; font-weight: 700; margin:0; }
+        .sub { margin: 2px 0; color:#444; }
+        .pill { display:inline-block; border:1px solid #ddd; padding:6px 10px; border-radius: 999px; font-size: 12px; }
+        .summary { margin: 10px 0 14px; border:1px solid #eee; border-radius: 10px; padding: 10px; }
+        .summaryGrid { display:flex; gap: 14px; flex-wrap:wrap; }
+        .box { border:1px solid #eee; border-radius: 10px; padding: 10px; min-width: 160px; }
+        .k { color:#666; font-size: 11px; }
+        .v { font-weight: 700; font-size: 14px; margin-top: 2px; }
+        table { width:100%; border-collapse: collapse; }
+        th, td { border-bottom: 1px solid #eee; padding: 8px; vertical-align: top; }
+        th { text-align:left; font-size: 11px; color:#444; }
+        .c { text-align:center; }
+        .r { text-align:right; white-space:nowrap; }
+        .foot { margin-top: 12px; color:#666; font-size: 10px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div>
+          <p class="title">Driver Ride Report</p>
+          <p class="sub">Driver ID: ${esc(driverIdStr)}</p>
+          <p class="sub">Coverage: <span class="pill">${esc(rangeLabel)}</span></p>
+        </div>
+        <div style="text-align:right">
+          <p class="sub">Generated: ${esc(printedAt)}</p>
+          <p class="sub">Toda-GO</p>
+        </div>
+      </div>
+
+      <div class="summary">
+        <div class="summaryGrid">
+          <div class="box"><div class="k">Trips</div><div class="v">${totals.trips}</div></div>
+          <div class="box"><div class="k">Solo Trips</div><div class="v">${totals.soloTrips}</div></div>
+          <div class="box"><div class="k">Group Trips</div><div class="v">${totals.groupTrips}</div></div>
+          <div class="box"><div class="k">Total Passengers</div><div class="v">${totals.paxTotal}</div></div>
+          <div class="box"><div class="k">Gross Earnings</div><div class="v">${esc(php(totals.gross))}</div></div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="c">#</th>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Pickup</th>
+            <th>Destination</th>
+            <th class="c">Pax</th>
+            <th class="r">Fare</th>
+            <th class="r">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="8" class="c">No records in this range.</td></tr>`}
+        </tbody>
+      </table>
+
+      <div class="foot">
+        Group totals are fare × pax unless totalFare is provided by server.
+      </div>
+    </body>
+    </html>
+    `;
+  };
+
+  // ✅ Save pdf to Downloads/Documents via SAF (user picks folder)
+  const savePdfToFolder = async (pdfUri: string, suggestedName: string) => {
+    if (Platform.OS !== "android") {
+      Alert.alert("Not supported", "Saving directly to Downloads/Documents is Android-only for this setup.");
+      return;
+    }
+
+    try {
+      const perm = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Cancelled", "Folder access was not granted.");
+        return;
+      }
+
+      const base64 = await FileSystem.readAsStringAsync(pdfUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const destUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        perm.directoryUri,
+        suggestedName,
+        "application/pdf"
+      );
+
+      await FileSystem.writeAsStringAsync(destUri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      Alert.alert("Saved ✅", `Saved to selected folder as:\n${suggestedName}`);
+    } catch (e) {
+      console.warn("[DHistory] savePdfToFolder failed:", e);
+      Alert.alert("Save failed", "Could not save the PDF to the selected folder.");
+    }
+  };
+
+  const downloadHistoryPDF = async (mode: "all" | "month" | "year", year?: number, month?: number) => {
+    try {
+      if (!driverId) return Alert.alert("Missing driver ID", "Please login again.");
+      if (allItems.length === 0) return Alert.alert("No history", "No ride history to export yet.");
+
+      const filtered = filterByRange(allItems, mode, year, month);
+      const rangeLabel = formatDateRangeLabel(mode, year, month);
+      const html = buildReportHTML(filtered, rangeLabel, String(driverId));
+
+      const { uri } = await Print.printToFileAsync({ html });
+
+      const clean = (s: string) =>
+        String(s || "")
+          .trim()
+          .replace(/\s+/g, "_")
+          .replace(/[^a-zA-Z0-9_\-]/g, ""); // remove weird chars (slashes, emojis, etc)
+
+      const who = clean(driverName) || clean(String(driverId)) || "Driver";
+
+      const fileName =
+        mode === "all"
+          ? `TodaGO_DriverReport_${who}_ALL.pdf`
+          : mode === "year"
+            ? `TodaGO_DriverReport_${who}_${year}.pdf`
+            : `TodaGO_DriverReport_${who}_${year}-${pad2(month!)}.pdf`;
+
+
+      await savePdfToFolder(uri, fileName);
+    } catch (e) {
+      console.warn("[DHistory] PDF export failed:", e);
+      Alert.alert("Export failed", "Could not generate the PDF.");
+    }
+  };
 
   const toggleExpand = (id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -332,14 +567,14 @@ export default function DHistory() {
               try {
                 const res = await fetch(url, { method: "DELETE" });
                 if (res.ok) { success = true; break; }
-              } catch (e) {}
+              } catch {}
             }
             if (!success) {
               setAllItems(prev);
               Alert.alert("Delete failed", "Could not delete from the server.");
               await fetchAll();
             }
-          } catch (e) {
+          } catch {
             setAllItems(prev);
             Alert.alert("Delete failed", "Unexpected error.");
             await fetchAll();
@@ -355,7 +590,13 @@ export default function DHistory() {
   if (!loading && allItems.length === 0) {
     return (
       <View style={styles.container}>
-        <View style={styles.topBar}><Text style={styles.heading}>HISTORY</Text></View>
+        <View style={[styles.topBar, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+          <Text style={styles.heading}>HISTORY</Text>
+          <TouchableOpacity onPress={() => setDlOpen(true)} style={{ padding: 8, borderWidth: 1, borderColor: "#ddd", borderRadius: 999 }}>
+            <Ionicons name="download-outline" size={20} color="#111" />
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.emptyWrap}>
           <Image source={require("../../assets/images/tricycle.png")} style={styles.emptyImage} />
           <Text style={styles.emptyMsg}>No history yet — drive some trips to see them here.</Text>
@@ -363,13 +604,100 @@ export default function DHistory() {
             <Text style={styles.viewMoreText}>Reload</Text>
           </TouchableOpacity>
         </View>
+
+        <Modal visible={dlOpen} transparent animationType="fade" onRequestClose={() => setDlOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={{ fontSize: 16, fontWeight: "700", marginBottom: 10 }}>Download Ride Report (PDF)</Text>
+
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                {(["all", "month", "year"] as const).map((m) => (
+                  <TouchableOpacity
+                    key={m}
+                    onPress={() => setDlMode(m)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: dlMode === m ? "#111" : "#ddd",
+                      backgroundColor: dlMode === m ? "#f3f3f3" : "#fff",
+                    }}
+                  >
+                    <Text style={{ fontWeight: "700" }}>
+                      {m === "all" ? "All" : m === "month" ? "Monthly" : "Yearly"}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {dlMode !== "all" && (
+                <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Year</Text>
+                    <TextInput
+                      value={String(dlYear)}
+                      onChangeText={(t) => {
+                        const y = Number(t.replace(/[^\d]/g, ""));
+                        if (Number.isFinite(y) && y >= 2000 && y <= 2100) setDlYear(y);
+                      }}
+                      keyboardType="numeric"
+                      style={[styles.feedbackInput, { minHeight: 44 }]}
+                    />
+                  </View>
+
+                  {dlMode === "month" && (
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Month (1-12)</Text>
+                      <TextInput
+                        value={String(dlMonth)}
+                        onChangeText={(t) => {
+                          let m = Number(t.replace(/[^\d]/g, ""));
+                          if (!Number.isFinite(m)) return;
+                          if (m < 1) m = 1;
+                          if (m > 12) m = 12;
+                          setDlMonth(m);
+                        }}
+                        keyboardType="numeric"
+                        style={[styles.feedbackInput, { minHeight: 44 }]}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <View style={{ flexDirection: "row", gap: 10, justifyContent: "flex-end" }}>
+                <TouchableOpacity onPress={() => setDlOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 14 }}>
+                  <Text style={{ fontWeight: "700", color: "#666" }}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={async () => {
+                    setDlOpen(false);
+                    if (dlMode === "all") return downloadHistoryPDF("all");
+                    if (dlMode === "year") return downloadHistoryPDF("year", dlYear);
+                    return downloadHistoryPDF("month", dlYear, dlMonth);
+                  }}
+                  style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#111", backgroundColor: "#111" }}
+                >
+                  <Text style={{ fontWeight: "700", color: "#fff" }}>Save PDF</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.topBar}><Text style={styles.heading}>HISTORY</Text></View>
+      <View style={[styles.topBar, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+        <Text style={styles.heading}>HISTORY</Text>
+        <TouchableOpacity onPress={() => setDlOpen(true)} style={{ padding: 8, borderWidth: 1, borderColor: "#ddd", borderRadius: 999 }}>
+          <Ionicons name="download-outline" size={20} color="#111" />
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={dataToShow}
@@ -396,6 +724,88 @@ export default function DHistory() {
           ) : null
         }
       />
+
+      <Modal visible={dlOpen} transparent animationType="fade" onRequestClose={() => setDlOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={{ fontSize: 16, fontWeight: "700", marginBottom: 10 }}>Download Ride Report (PDF)</Text>
+
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              {(["all", "month", "year"] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => setDlMode(m)}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: dlMode === m ? "#111" : "#ddd",
+                    backgroundColor: dlMode === m ? "#f3f3f3" : "#fff",
+                  }}
+                >
+                  <Text style={{ fontWeight: "700" }}>
+                    {m === "all" ? "All" : m === "month" ? "Monthly" : "Yearly"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {dlMode !== "all" && (
+              <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Year</Text>
+                  <TextInput
+                    value={String(dlYear)}
+                    onChangeText={(t) => {
+                      const y = Number(t.replace(/[^\d]/g, ""));
+                      if (Number.isFinite(y) && y >= 2000 && y <= 2100) setDlYear(y);
+                    }}
+                    keyboardType="numeric"
+                    style={[styles.feedbackInput, { minHeight: 44 }]}
+                  />
+                </View>
+
+                {dlMode === "month" && (
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Month (1-12)</Text>
+                    <TextInput
+                      value={String(dlMonth)}
+                      onChangeText={(t) => {
+                        let m = Number(t.replace(/[^\d]/g, ""));
+                        if (!Number.isFinite(m)) return;
+                        if (m < 1) m = 1;
+                        if (m > 12) m = 12;
+                        setDlMonth(m);
+                      }}
+                      keyboardType="numeric"
+                      style={[styles.feedbackInput, { minHeight: 44 }]}
+                    />
+                  </View>
+                )}
+              </View>
+            )}
+
+            <View style={{ flexDirection: "row", gap: 10, justifyContent: "flex-end" }}>
+              <TouchableOpacity onPress={() => setDlOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 14 }}>
+                <Text style={{ fontWeight: "700", color: "#666" }}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={async () => {
+                  setDlOpen(false);
+                  if (dlMode === "all") return downloadHistoryPDF("all");
+                  if (dlMode === "year") return downloadHistoryPDF("year", dlYear);
+                  return downloadHistoryPDF("month", dlYear, dlMonth);
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: "#111", backgroundColor: "#111" }}
+              >
+                <Text style={{ fontWeight: "700", color: "#fff" }}>Save PDF</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -413,7 +823,6 @@ function HistoryCard({
   const pickup = item.pickupLabel || item.pickupPlace || "Pickup location";
   const dest = item.destinationLabel || item.destinationPlace || "Destination";
 
-  // For group: show per-person fare × pax and computed total (if totalFare available use it)
   const perFare = item.fare ?? 0;
   const pax = item.groupCount ?? 1;
   const total = item.totalFare != null ? item.totalFare : (String(item.bookingType).toLowerCase() === "group" ? perFare * pax : perFare);
@@ -437,10 +846,6 @@ function HistoryCard({
 
           <View style={[styles.row, { marginTop: 6, justifyContent: "space-between" }]}>
             <Text style={styles.timeText}>{when(item.createdAt)}</Text>
-
-            {/* {String(item.bookingType).toLowerCase() === "group" && typeof item.groupCount === "number" && (
-              
-            )} */}
           </View>
         </View>
 
@@ -512,7 +917,6 @@ const styles = StyleSheet.create({
   priceText: { fontSize: 14, fontWeight: "700", color: "#111" },
   typeChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
   typeChipText: { fontSize: 11, fontWeight: "700" },
-  groupChip: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#ddd", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
 
   expandBox: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#eee" },
   expandTitle: { fontSize: 14, marginBottom: 6 },
@@ -532,7 +936,5 @@ const styles = StyleSheet.create({
 
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 },
   modalCard: { width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 },
-  feedbackInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, minHeight: 80, textAlignVertical: "top" },
-  submitButton: { marginTop: 8, borderRadius: 8, paddingVertical: 10, alignItems: "center" },
-  submitButtonText: { color: "#fff", fontWeight: "600" },
+  feedbackInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, minHeight: 44, textAlignVertical: "top" },
 });

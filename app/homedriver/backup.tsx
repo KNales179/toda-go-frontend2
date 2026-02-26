@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -9,44 +9,360 @@ import {
   StatusBar,
   Alert,
   BackHandler,
-} from 'react-native';
+  AppState,
+  Linking,
+  Platform,
+  Image,
+} from "react-native";
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
-import { useLocation } from '../location/GlobalLocation';
-import { API_BASE_URL } from "../../config";
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocation } from "../location/GlobalLocation";
+import { API_BASE_URL, MAPTILER_KEY } from "../../config";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import * as Location from 'expo-location';
+import type { AppStateStatus } from "react-native";
+import ChatNotice from "../../components/ChatNotice";
+// ❌ removed getAuth usage; using AsyncStorage only
+import * as Clipboard from "expo-clipboard";
+import * as IntentLauncher from "expo-intent-launcher";
+import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
+import { buildDriverMapHtml } from "./subfile/utils/driverMapHtml";
+import DriverStatusBar from "./subfile/components/DriverStatusBar";
+import AcceptedPassengersList from "./subfile/components/AcceptedPassengersList";
+import PreviewBookingCard from "./subfile/components/PreviewBookingCard";
+import IncomingBookingCard from "./subfile/components/IncomingBookingCard";
+import WorkflowCard from "./subfile/components/WorkflowCard";
+import PaymentCard from "./subfile/components/PaymentCard";
 
-type LatLng = { lat: number; lng: number };
+// ✅ NEW: task + pwApp UI + hooks
+import TaskProgressBar from "./subfile/components/TaskProgressBar";
+import PwAppPanel from "./subfile/components/PwAppPanel";
+import { useDriverTasks } from "./subfile/hooks/useDriverTasks";
+import { usePwApp } from "./subfile/hooks/usePwApp";
+
+const ENABLE_DEBUG = true;
+const ALLOWED_TAG_PREFIXES = ["PUSH", "DHOME:acceptBooking", "DHOME:confirmPayment"];
+
+// --- Debug helper ---
+const dbg = async (tag: string, extra?: any) => {
+  try {
+    const [source, message] = tag.split(":");
+
+    await fetch(`${API_BASE_URL}/api/debug-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: source || "PHOME",
+        message: message || tag,
+        extra: extra || {},
+      }),
+    });
+  } catch (e) {}
+};
+
+Notifications.setNotificationHandler({
+  handleNotification: async () =>
+    ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    } as Notifications.NotificationBehavior),
+});
+
+const safeJson = async (res: Response, label: string) => {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.error(`${label} → non-JSON`, {
+      status: res.status,
+      url: res.url,
+      body: text.slice(0, 400),
+    });
+    throw new Error(`${label} returned non-JSON (status ${res.status})`);
+  }
+};
+
+// ---- Address label helpers (cache + reverse geocode) ----
+const addrCacheRef = { current: new Map<string, string>() };
+
+function coordsKey(lat: number, lng: number) {
+  return `${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+// Builds a short readable label from Expo reverse geocode result
+function buildLabel(addr: Location.LocationGeocodedAddress | null) {
+  if (!addr) return "Selected location";
+  const p = [];
+  if (addr.name) p.push(addr.name);
+  if (addr.street && !p.includes(addr.street)) p.push(addr.street);
+  const city = addr.city || addr.subregion || addr.district || addr.region;
+  if (city) p.push(city);
+  return p.filter(Boolean).join(", ") || "Selected location";
+}
+
+async function getPlaceLabel(lat: number, lng: number) {
+  const key = coordsKey(lat, lng);
+  const cached = addrCacheRef.current.get(key);
+  if (cached) return cached;
+
+  try {
+    const res = await Location.reverseGeocodeAsync({
+      latitude: lat,
+      longitude: lng,
+    });
+    const label = buildLabel(res?.[0] ?? null);
+    addrCacheRef.current.set(key, label);
+    return label;
+  } catch {
+    const fallback = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    addrCacheRef.current.set(key, fallback);
+    return fallback;
+  }
+}
+
+async function ensureLocationEnabled(): Promise<boolean> {
+  const services = await Location.hasServicesEnabledAsync();
+  const perm = await Location.getForegroundPermissionsAsync();
+
+  if (!services || perm.status !== "granted") {
+    Alert.alert(
+      "Enable Location",
+      "We need your location for live tracking. Please enable GPS and grant permission.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Open Settings",
+          onPress: () => {
+            if (Platform.OS === "android") {
+              IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS);
+            } else {
+              Linking.openURL("app-settings:");
+            }
+          },
+        },
+      ]
+    );
+    return false;
+  }
+  return true;
+}
+
+// ---- Driver push token helper ----
+async function registerDriverPushToken(driverId: string) {
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== "granted") {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== "granted") {
+      console.log("❌ Driver push permission not granted");
+      return;
+    }
+
+    const projectId: string | undefined =
+      Constants?.expoConfig?.extra?.eas?.projectId ??
+      (Constants as any)?.easConfig?.projectId ??
+      Constants?.manifest2?.extra?.eas?.projectId;
+
+    const tokenResponse = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    const pushToken = tokenResponse.data;
+    if (!pushToken) {
+      console.log("❌ Failed to get Expo push token for driver");
+      return;
+    }
+
+    console.log("📲 Driver push token:", pushToken);
+
+    const res = await fetch(`${API_BASE_URL}/api/driver/push-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ driverId, pushToken }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      console.log("❌ /driver/push-token failed", res.status, txt.slice(0, 200));
+    } else {
+      console.log("✅ Driver push token saved");
+    }
+  } catch (e) {
+    console.log("❌ Error registering driver push token:", e);
+  }
+}
+
 type Phase = "idle" | "toPickup" | "toDropoff";
+type LatLng = { lat: number; lng: number };
 
-const { width } = Dimensions.get('window');
-
-export default function DHome() {
+export default function DHomeTaskPwApp() {
   const { location } = useLocation();
   const [isOnline, setIsOnline] = useState(false);
   const [mapHtml, setMapHtml] = useState("");
   const mapRef = useRef<WebViewType | null>(null);
-
-  const [incomingBooking, setIncomingBooking] = useState<any>(null); // focused accepted job
+  const [driverId, setDriverId] = useState<string | null>(null);
+  const [livePos, setLivePos] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [incomingBooking, setIncomingBooking] = useState<any>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [pickedUp, setPickedUp] = useState(false);
   const [dropoff, setDropOff] = useState(false);
-  const [paymentConfirm, setPaymentConfirm] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [minimized, setMinimized] = useState(false);
-
   const [queue, setQueue] = useState<any[]>([]);
   const [capacity, setCapacity] = useState<number | null>(null);
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
-  const [previewBooking, setPreviewBooking] = useState<any | null>(null); // tapped PoPas preview
-
+  const [previewBooking, setPreviewBooking] = useState<any | null>(null);
+  const [todas, setTodas] = useState<any[]>([]);
   const [driverLoc, setDriverLoc] = useState<LatLng | null>(null);
-  const [phase, setPhase] = useState<Phase>("idle");
-
+  const heartbeatTimerRef = useRef<number | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const bookingIdRef = useRef<string | null>(null);
-  const dbg = (...args: any[]) => console.log("[DHOME]", ...args);
+  const [driverPayment, setDriverPayment] = React.useState<{ gcashNumber?: string; gcashQRUrl?: string } | null>(
+    null
+  );
+
+  const usedSeats = activeJobs.reduce((sum, job) => sum + (job.partySize || 1), 0);
+  const totalSeats = capacity;
+  const isFull = totalSeats != null && usedSeats >= totalSeats;
+  const [currentBooking, setCurrentBooking] = useState<any>(null);
+  const [currentToda, setCurrentToda] = useState<any | null>(null);
+  const [inTodaZone, setInTodaZone] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const msgQ = useRef<string[]>([]);
+  const hasRegisteredPushRef = useRef(false);
+  const [taskPwMinimized, setTaskPwMinimized] = useState(false);
+
+  const sendToMap = (obj: any) => {
+    const s = JSON.stringify(obj);
+    if (!mapReady || !mapRef.current) {
+      msgQ.current.push(s);
+      return;
+    }
+    mapRef.current.postMessage(s);
+  };
+
+  const [jobStateById, setJobStateById] = useState<{
+    [id: string]: { phase: Phase; pickedUp: boolean; paymentConfirm: boolean };
+  }>({});
+  const defaultJobState = { phase: "toPickup" as Phase, pickedUp: false, paymentConfirm: false };
+
+  const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
+
+  function getJobStateFor(job: any | null) {
+    if (!job || !job.id) return defaultJobState;
+    return jobStateById[job.id] || defaultJobState;
+  }
+  const focusedJobState = getJobStateFor(incomingBooking);
+  const showWorkflowCard = !!incomingBooking && !minimized && !focusedJobState.paymentConfirm;
+  const isPickedUp = focusedJobState.pickedUp;
+  const showPaymentCard = !!incomingBooking && !minimized && focusedJobState.paymentConfirm;
+
+  const pickDisplayName = (b: any, passengerProfile?: any) => {
+    const acctName = passengerProfile
+      ? [passengerProfile.firstName, passengerProfile.middleName, passengerProfile.lastName].filter(Boolean).join(" ")
+      : b.passengerName || "Passenger";
+    const rider = (b.riderName || "").trim();
+    return b.bookedFor && rider ? rider : acctName;
+  };
+
+  const pickDisplayPhone = (b: any, passengerProfile?: any) => {
+    const rider = (b.riderPhone || "").trim();
+    if (b.bookedFor && rider) return rider;
+    const p = passengerProfile?.phone || passengerProfile?.contactNumber || passengerProfile?.mobile || "";
+    return (p || "").trim();
+  };
+
+  useEffect(() => {
+    if (mapReady && mapRef.current && msgQ.current.length) {
+      msgQ.current.forEach((m) => mapRef.current?.postMessage(m));
+      msgQ.current = [];
+    }
+  }, [mapReady]);
+
+  const status = currentBooking?.status as "accepted" | "pending" | "completed" | "canceled" | undefined;
+  const passengerId = currentBooking?.passengerId;
+
+  // ✅ driverId only from AsyncStorage
+  useEffect(() => {
+    const fetchDriver = async () => {
+      const legacyId = await AsyncStorage.getItem("driverId");
+      if (!legacyId) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/dlogin");
+        return;
+      }
+      setDriverId(String(legacyId));
+    };
+    fetchDriver();
+  }, []);
+
+  // push token register
+  useEffect(() => {
+    if (!driverId) return;
+    if (hasRegisteredPushRef.current) return;
+    hasRegisteredPushRef.current = true;
+    registerDriverPushToken(driverId);
+  }, [driverId]);
+
+  // ✅ NEW: tasks + pwApp hooks (auto poll when online)
+  const tasks = useDriverTasks(driverId || "", isOnline);
+  const pwapp = usePwApp(driverId || "", isOnline);
+
+  // ✅ NEW: send pwApp pins to map whenever list changes
+  useEffect(() => {
+    if (!isOnline) return;
+    sendToMap({
+      type: "setPwAppMarkers",
+      items: (pwapp.list || []).map((p) => ({
+        id: p._id,
+        lat: p.pickupLat,
+        lng: p.pickupLng,
+        passengerType: p.passengerType,
+        note: p.note || "",
+      })),
+    });
+    
+  }, [isOnline, pwapp.list, mapReady]);
+
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const ordered = [
+      ...tasks.active.map(t => ({...t, status:"ACTIVE"})),
+      ...tasks.pending.map(t => ({...t, status:"PENDING"})),
+    ];
+
+    const activeTaskId = tasks.active?.[0]?._id || null;
+
+    sendToMap({
+      type: "setTaskPlan",
+      activeTaskId,
+      tasks: ordered.map((t, i) => ({
+        id: t._id,
+        lat: t.lat,
+        lng: t.lng,
+        taskType: t.taskType,
+        status: t.status,
+        label: t.place || "",
+      })),
+    });
+  }, [isOnline, tasks.active, tasks.pending, mapReady]);
+  
+
+  const setBookingPaymentStatus = async (bookingId: string, status: "paid" | "failed") => {
+    try {
+      await fetch(`${API_BASE_URL}/api/booking/${bookingId}/payment-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+    } catch {}
+  };
+
+  const canShowChatNotice = status === "accepted" && !!currentBooking?._id && !!driverId && !!passengerId;
 
   const validateBooking = (b: any) => {
     const okNum = (n: any) => typeof n === "number" && Number.isFinite(n);
@@ -68,45 +384,92 @@ export default function DHome() {
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
     const s =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+      Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(s));
   };
 
+  useEffect(() => {
+    if (!driverLoc && location) {
+      const seeded = { lat: location.latitude, lng: location.longitude };
+      setDriverLoc(seeded);
+      sendToMap({ type: "updateDriver", latitude: seeded.lat, longitude: seeded.lng });
+    }
+  }, [location, isOnline]);
+
+  useEffect(() => {
+    if (!driverLoc && !todas.length) {
+      setCurrentToda(null);
+      setInTodaZone(false);
+      return;
+    }
+    if (!driverLoc || !todas.length) {
+      setCurrentToda(null);
+      setInTodaZone(false);
+      return;
+    }
+
+    let best: any = null;
+    let bestDist = Infinity;
+
+    for (const t of todas) {
+      const center = { lat: t.latitude, lng: t.longitude };
+      const d = haversineMeters(driverLoc, center);
+
+      const r = typeof t.radiusMeters === "number" && t.radiusMeters > 0 ? t.radiusMeters : 100;
+
+      if (d <= r && d < bestDist) {
+        best = t;
+        bestDist = d;
+      }
+    }
+
+    if (best) {
+      setCurrentToda(best);
+      setInTodaZone(true);
+    } else {
+      setCurrentToda(null);
+      setInTodaZone(false);
+    }
+  }, [driverLoc, todas]);
+
   const routeAndDraw = async (from: LatLng, to: LatLng) => {
+    const url = `${API_BASE_URL}/api/route?start=${from.lng},${from.lat}&end=${to.lng},${to.lat}`;
+
     try {
-      const url = `${API_BASE_URL}/api/route?start=${from.lng},${from.lat}&end=${to.lng},${to.lat}`;
       const res = await fetch(url);
+
       if (!res.ok) {
         const txt = await res.text();
-        dbg("route error body", txt);
         Alert.alert("Routing error", `HTTP ${res.status}`);
         return null;
       }
-      const geo = await res.json();
-      const feat = geo.features?.[0];
-      if (!feat) {
-        Alert.alert("Routing error", "No features in GeoJSON (start/end missing?)");
-        dbg("GeoJSON with no features", geo);
+
+      const raw = await res.text();
+      let geo: any = null;
+      try {
+        geo = JSON.parse(raw);
+      } catch (e) {
+        Alert.alert("Routing error", "Route API returned non-JSON");
         return null;
       }
 
-      const coords = (feat.geometry?.coordinates || []).map(
-        ([lng, lat]: number[]) => [lat, lng]
-      );
+      const feat = geo.features?.[0];
+
+      if (!feat) {
+        Alert.alert("Routing error", "No features in GeoJSON (check start/end)");
+        return null;
+      }
+
+      const coords = (feat.geometry?.coordinates || []).map(([lng, lat]: number[]) => [lat, lng]);
       const { distance = 0, duration = 0 } = feat.properties?.summary || {};
+      if (!coords.length) {
+        Alert.alert("Routing error", "Route has 0 coordinates");
+        return null;
+      }
 
-      mapRef.current?.postMessage(
-        JSON.stringify({
-          type: "drawRoute",
-          coords,
-          summary: { distance, duration },
-        })
-      );
-
+      sendToMap({ type: "drawRoute", coords, summary: { distance, duration } });
       return { distance, duration };
     } catch (e: any) {
-      dbg("route exception", e?.message || e);
       Alert.alert("Routing error", e?.message || "Failed to get route");
       return null;
     }
@@ -128,294 +491,327 @@ export default function DHome() {
     })();
   }, [isOnline]);
 
+  // on mount
+  useEffect(() => {
+    ensureLocationEnabled();
+  }, []);
+
+  // on resume
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") ensureLocationEnabled();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // on screen focus
+  useFocusEffect(
+    React.useCallback(() => {
+      ensureLocationEnabled();
+    }, [])
+  );
+
+  useEffect(() => {
+    if (!mapReady) return;
+
+    const fetchTodas = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/todas-public`);
+        const json = await res.json();
+        const list = Array.isArray(json) ? json : [];
+        setTodas(list);
+
+        sendToMap({
+          type: "setTodaZones",
+          items: list.map((t: any) => ({
+            id: t.id || t._id,
+            name: t.name,
+            lat: t.latitude,
+            lng: t.longitude,
+            radius: typeof t.radiusMeters === "number" ? t.radiusMeters : 100,
+          })),
+        });
+      } catch (e) {
+        console.log("[DHOME] failed to load TODAs", e);
+      }
+    };
+
+    fetchTodas();
+  }, [mapReady]);
+
   // build map html
   useEffect(() => {
-    if (!location) return;
-
-    const html = String.raw`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-          <style> html, body, #map { height: 100%; margin: 0; padding: 0; } </style>
-        </head>
-        <body>
-          <div id="map"></div>
-          <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-          <script>
-            let pickupMarker = null;
-            let destinationMarker = null;
-            let driverMarker = null;
-            let routeLine = null;
-            let midTooltipMarker = null;
-            let waitingLayer = null;
-
-            function formatDuration(sec){
-              if (sec < 60) return Math.round(sec) + "s";
-              const m = Math.round(sec / 60);
-              if (m >= 60) return Math.floor(m/60) + "h " + (m%60) + "m";
-              return m + "m";
-            }
-
-            const map = L.map('map').setView([${location.latitude}, ${location.longitude}], 15);
-
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-              maxZoom: 19,
-              attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-
-            driverMarker = L.marker([${location.latitude}, ${location.longitude}]).addTo(map);
-
-            document.addEventListener('message', function(event) {
-              const msg = JSON.parse(event.data);
-
-              if (msg.type === 'setPassengerMarkers') {
-                if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
-                if (destinationMarker) { map.removeLayer(destinationMarker); destinationMarker = null; }
-
-                if (msg.pickup) {
-                  pickupMarker = L.marker([msg.pickup.latitude, msg.pickup.longitude], {
-                    icon: L.icon({
-                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/blue-dot.png',
-                      iconSize: [30, 30],
-                    })
-                  }).addTo(map);
-                }
-
-                if (msg.destination) {
-                  destinationMarker = L.marker([msg.destination.latitude, msg.destination.longitude], {
-                    icon: L.icon({
-                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png',
-                      iconSize: [30, 30],
-                    })
-                  }).addTo(map).bindTooltip("🎯 Destination", { permanent: true, direction: "top" });
-                }
-              }
-
-              if (msg.type === 'updateDriver') {
-                if (driverMarker) driverMarker.setLatLng([msg.latitude, msg.longitude]);
-                else {
-                  driverMarker = L.marker([msg.latitude, msg.longitude]).addTo(map);
-                }
-              }
-
-              if (msg.type === 'drawRoute') {
-                if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-                if (midTooltipMarker) { map.removeLayer(midTooltipMarker); midTooltipMarker = null; }
-
-                routeLine = L.polyline(msg.coords, { weight: 5 }).addTo(map);
-                map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
-
-                const idx = Math.floor(msg.coords.length / 2);
-                const mid = msg.coords[idx] || msg.coords[0];
-                const km = (msg.summary.distance / 1000).toFixed(2);
-                const eta = formatDuration(msg.summary.duration);
-
-                midTooltipMarker = L.marker(mid, { opacity: 0 })
-                  .addTo(map)
-                  .bindTooltip(km + " km • " + eta, { permanent: true, direction: "top" })
-                  .openTooltip();
-              }
-
-              if (msg.type === 'clearRoute') {
-                if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-                if (midTooltipMarker) { map.removeLayer(midTooltipMarker); midTooltipMarker = null; }
-              }
-
-              if (msg.type === 'setWaitingMarkers') {
-                if (waitingLayer) { waitingLayer.clearLayers(); map.removeLayer(waitingLayer); }
-                waitingLayer = L.layerGroup().addTo(map);
-
-                var items = Array.isArray(msg.items) ? msg.items : [];
-                items.forEach(function(it) {
-                  var marker = L.marker([it.lat, it.lng], {
-                    icon: L.icon({
-                      iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/yellow-dot.png',
-                      iconSize: [30, 30],
-                    })
-                  })
-                  .addTo(waitingLayer)
-                  .bindTooltip('🧍 Passenger #' + it.id, { direction: 'top' });
-                  marker.on('click', function() {
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'waitingMarkerTapped',
-                      bookingId: it.id,
-                    }));
-                  });
-                });
-              }
-            });
-          </script>
-        </body>
-      </html>
-    `;
+    if (!location || mapHtml) return;
+    const html = buildDriverMapHtml(location.latitude, location.longitude);
     setMapHtml(html);
-  }, [location]);
+  }, [location, mapHtml]);
 
-  // live driver GPS push to map (only when not idle)
+  // live driver GPS push to map (only when online)
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
+
     const start = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Location", "Permission denied.");
-        return;
+      const ok = await ensureLocationEnabled();
+      if (!ok) return;
+
+      try {
+        const p = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const seeded = { lat: p.coords.latitude, lng: p.coords.longitude };
+        setDriverLoc(seeded);
+        sendToMap({ type: "updateDriver", latitude: seeded.lat, longitude: seeded.lng });
+      } catch (e) {
+        console.log("[DHOME:GPS] seed error", e);
       }
+
       sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Balanced,
-          timeInterval: 7000,
-          distanceInterval: 10,
+          timeInterval: 1000,
+          distanceInterval: 5,
         },
         (pos) => {
-          const { latitude, longitude } = pos.coords;
+          const { latitude, longitude, accuracy } = pos.coords;
+
+          if (typeof accuracy === "number" && accuracy > 500) return;
+
           const loc = { lat: latitude, lng: longitude };
           setDriverLoc(loc);
-          if (mapRef.current) {
-            mapRef.current.postMessage(
-              JSON.stringify({
-                type: "updateDriver",
-                latitude: loc.lat,
-                longitude: loc.lng,
-              })
-            );
-          }
+          sendToMap({ type: "updateDriver", latitude: loc.lat, longitude: loc.lng });
         }
       );
     };
-    if (phase !== "idle") start();
+
+    if (isOnline) start();
     return () => sub?.remove();
-  }, [phase]);
+  }, [isOnline]);
 
   // draw routes depending on phase
   useEffect(() => {
     const run = async () => {
-      if (!driverLoc || !incomingBooking) return;
-      const pickup = { lat: incomingBooking.pickupLat, lng: incomingBooking.pickupLng } as LatLng;
-      const dropoff = { lat: incomingBooking.destinationLat, lng: incomingBooking.destinationLng } as LatLng;
+      if (!driverLoc) return;
+      if (!incomingBooking) return;
 
-      if (phase === "toPickup") {
-        const near = haversineMeters(driverLoc, pickup) < 50;
-        if (!near) await routeAndDraw(driverLoc, pickup);
-      }
-      if (phase === "toDropoff") {
-        await routeAndDraw(driverLoc, dropoff);
+      const state = getJobStateFor(incomingBooking);
+
+      const pickup = { lat: incomingBooking.pickupLat, lng: incomingBooking.pickupLng } as LatLng;
+      const dropoffPt = { lat: incomingBooking.destinationLat, lng: incomingBooking.destinationLng } as LatLng;
+
+      if (state.phase === "toPickup") {
+        const d = haversineMeters(driverLoc, pickup);
+        if (d < 8) return;
+        await routeAndDraw(driverLoc, pickup);
+      } else if (state.phase === "toDropoff") {
+        await routeAndDraw(driverLoc, dropoffPt);
       }
     };
     run();
-  }, [driverLoc, phase, incomingBooking]);
+  }, [driverLoc, incomingBooking, jobStateById]);
 
-  // send driver status (online/offline)
-  const updateDriverStatus = async (newStatus: boolean) => {
-    if (!location) return;
+  const sendHeartbeat = async () => {
     try {
       const driverId = await AsyncStorage.getItem("driverId");
-      const driverName = await AsyncStorage.getItem("driverName");
       if (!driverId) return;
-      const response = await fetch(`${API_BASE_URL}/api/driver-status`, {
+
+      const center = driverLoc
+        ? { lat: driverLoc.lat, lng: driverLoc.lng }
+        : location
+        ? { lat: location.latitude, lng: location.longitude }
+        : null;
+
+      if (!center) return;
+
+      await fetch(`${API_BASE_URL}/api/driver-heartbeat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           driverId,
-          driverName,
-          isOnline: newStatus,
-          location: {
-            latitude: location.latitude,
-            longitude: location.longitude,
-          },
+          location: { lat: center.lat, lng: center.lng },
+          currentTodaId: currentToda ? currentToda.id : null,
+          inTodaZone,
         }),
       });
-      await response.json();
-    } catch (error) {
-      console.error("❌ Failed to update driver status:", error);
+    } catch (e) {
+      console.log("❌ heartbeat failed", e);
     }
   };
 
-  // poll bookings assigned to this driver (build activeJobs; keep accepted focused)
+  const updateDriverStatus = async (newStatus: boolean) => {
+    if (!driverId) return;
+
+    const center =
+      driverLoc ??
+      (location ? { lat: location.latitude, lng: location.longitude } : null);
+
+    try {
+      await fetch(`${API_BASE_URL}/api/driver-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          driverId,
+          isOnline: newStatus,
+          location: center ? { latitude: center.lat, longitude: center.lng } : undefined,
+          currentTodaId: currentToda ? currentToda.id : null,
+          inTodaZone,
+        }),
+      });
+    } catch (e) {
+      console.error("❌ Failed to update driver status:", e);
+    }
+  };
+
   useEffect(() => {
+    const handleAppState = (nextState: AppStateStatus) => {
+      appStateRef.current = nextState;
+      const isForeground = nextState === "active";
+
+      if (isOnline && isForeground) {
+        if (!heartbeatTimerRef.current) {
+          const start = () => {
+            sendHeartbeat();
+            heartbeatTimerRef.current = setInterval(() => {
+              const jitter = 1000 + Math.floor(Math.random() * 1000);
+              setTimeout(sendHeartbeat, jitter);
+            }, 20000);
+          };
+          start();
+        }
+      } else {
+        if (heartbeatTimerRef.current) {
+          clearInterval(heartbeatTimerRef.current);
+          heartbeatTimerRef.current = null;
+        }
+      }
+    };
+
+    const sub = AppState.addEventListener("change", handleAppState);
+    handleAppState(AppState.currentState);
+
+    return () => {
+      sub.remove?.();
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+    };
+  }, [isOnline, driverLoc]);
+
+  // Poll driver requests
+  useEffect(() => {
+    if (!driverId) return;
     let interval: any;
 
     const fetchRequests = async () => {
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId) return;
-
       try {
         const res = await fetch(`${API_BASE_URL}/api/driver-requests/${driverId}`);
-        const raw = await res.json();
+        const raw = await safeJson(res, "GET /api/driver-requests");
         const data: any[] = Array.isArray(raw) ? raw : [];
 
-        const acceptedOnly = data.filter(
-          (b: any) => b?.status === "accepted" && String(b?.driverId || "") === String(driverId)
-        );
-        setActiveJobs(acceptedOnly);
+        const acceptedOnly = data
+          .filter((b: any) => b?.status === "accepted" && String(b?.driverId || "") === String(driverId))
+          .map((b: any) => ({
+            ...b,
+            displayName: b.bookedFor && b.riderName ? b.riderName : b.passengerName || "Passenger",
+          }));
 
-        const acceptedHead = acceptedOnly[0];
-        if (acceptedHead) {
-          setIncomingBooking((prev: any) =>
-            prev?.id === acceptedHead.id ? prev : acceptedHead
-          );
+        setActiveJobs((prev) => {
+          const prevMap = new Map(prev.map((j: any) => [String(j.id), j]));
+          return acceptedOnly.map((b: any) => {
+            const key = String(b.id);
+            const prevJob = prevMap.get(key);
+            return prevJob ? { ...prevJob, ...b } : b;
+          });
+        });
+
+        let chosen: any = null;
+
+        if (activeBookingId) {
+          chosen = acceptedOnly.find((b) => String(b.id) === String(activeBookingId)) || null;
+        }
+
+        if (!chosen && acceptedOnly.length > 0) {
+          chosen = acceptedOnly[0];
+          setActiveBookingId(String(chosen.id));
+        }
+
+        if (!chosen) {
+          if (activeBookingId || incomingBooking) {
+            console.log("❌ Booking disappeared — cleanup");
+            if (incomingBooking) {
+              Alert.alert("Booking Cancelled", "The passenger has cancelled the booking.");
+            }
+
+            mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+            mapRef.current?.postMessage(
+              JSON.stringify({ type: "setPassengerMarkers", pickup: null, destination: null })
+            );
+
+            setIncomingBooking(null);
+            setConfirmed(false);
+            setDropOff(false);
+            setPhase("idle");
+            setPreviewBooking(null);
+            setActiveJobs([]);
+            setActiveBookingId(null);
+          }
           return;
         }
 
-        // if we thought we had an accepted, but server shows none → cancelled
-        const wasAcceptedByMe =
-          incomingBooking?.status === "accepted" &&
-          String(incomingBooking?.driverId || "") === String(driverId);
-
-        if (wasAcceptedByMe) {
-          console.log("❌ Booking was cancelled - cleaning up...");
-          Alert.alert("Booking Cancelled", "The passenger has cancelled the booking.");
-
-          mapRef.current?.postMessage(JSON.stringify({
-            type: "setPassengerMarkers",
-            pickup: null, destination: null,
-          }));
-
-          setIncomingBooking(null);
-          setConfirmed(false);
-          setPhase("idle");
-          setActiveJobs(prev => prev.filter(j => String(j.id) !== String(incomingBooking?.id)));
-        }
+        const chosenId = String(chosen.bookingId || chosen.id || chosen._id);
+        bookingIdRef.current = chosenId;
+        setJobStateById((prev) => ({
+          ...prev,
+          [chosenId]: prev[chosenId] || defaultJobState,
+        }));
       } catch (err) {
         console.error("❌ Failed to fetch booking:", err);
       }
     };
 
-    if (isOnline && !paymentConfirm) {
+    if (isOnline && !focusedJobState.paymentConfirm) {
       fetchRequests();
       interval = setInterval(fetchRequests, 5000);
     }
     return () => clearInterval(interval);
-  }, [isOnline, paymentConfirm, incomingBooking]);
+  }, [isOnline, focusedJobState.paymentConfirm, incomingBooking, driverId, activeBookingId, driverLoc, location]);
 
-  // reflect accepted→confirmed
   useEffect(() => {
     if (incomingBooking && incomingBooking.status === "accepted") {
       setConfirmed(true);
     }
   }, [incomingBooking]);
 
-  // accept from preview (PoPas tap)
+  // accept from preview
   const acceptPreview = async () => {
     try {
       if (!previewBooking?.id) return;
+
       const driverId = await AsyncStorage.getItem("driverId");
       if (!driverId) {
         Alert.alert("Error", "Missing driverId. Please re-login.");
         return;
       }
+
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingId: previewBooking.id, driverId }),
       });
+
       const result = await res.json();
       if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
-      let booking = result.booking;
+      let booking = result.booking as any;
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
+      console.log("[DHOME] booking raw from backend →", result.booking);
 
-      // hydrate passenger name (optional)
+      const [pickupLabel, destinationLabel] = await Promise.all([
+        getPlaceLabel(booking.pickupLat, booking.pickupLng),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
+      ]);
+
+      let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
           const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
@@ -423,6 +819,7 @@ export default function DHome() {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
             if (p) {
+              passengerProfile = p;
               const buildName = (x: any) => [x.firstName, x.middleName, x.lastName].filter(Boolean).join(" ");
               booking = { ...booking, passengerName: buildName(p) };
             }
@@ -430,29 +827,47 @@ export default function DHome() {
         } catch {}
       }
 
-      // set as active and focus it
-      setActiveJobs(prev => (prev.some(j => String(j.id) === String(booking.id)) ? prev : [...prev, booking]));
+      booking = {
+        ...booking,
+        pickupLabel,
+        destinationLabel,
+        bookingType: booking.bookingType || "CLASSIC",
+        partySize: booking.partySize || 1,
+      };
+
+      const displayName = pickDisplayName(booking, passengerProfile);
+      const displayPhone = pickDisplayPhone(booking, passengerProfile);
+      booking = { ...booking, displayName, displayPhone };
+      const jobId = String(booking.id);
+
+      setActiveJobs((prev) => (prev.some((j) => String(j.id) === jobId) ? prev : [...prev, booking]));
+      setJobStateById((prev) => ({
+        ...prev,
+        [jobId]: prev[jobId] || { phase: "toPickup", pickedUp: false, paymentConfirm: false },
+      }));
+      setActiveBookingId(jobId);
+
       setIncomingBooking(booking);
       bookingIdRef.current = String(booking.id);
-      setConfirmed(true);
-      setPhase("toPickup");
       setPreviewBooking(null);
 
       const check = validateBooking(booking);
       if (!check.valid) Alert.alert("Booking data issue", check.issues.join(", "));
 
-      mapRef.current?.postMessage(JSON.stringify({
-        type: "setPassengerMarkers",
-        pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
-        destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
-      }));
+      mapRef.current?.postMessage(
+        JSON.stringify({
+          type: "setPassengerMarkers",
+          pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
+          destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
+        })
+      );
     } catch (error: any) {
-      console.error("❌ Error accepting booking:", error);
+      console.error("❌ Error accepting booking (preview):", error);
       Alert.alert("Error", error.message ?? "Failed to accept booking.");
     }
   };
 
-  // accept from the old “incoming” card (kept for safety if you still call setIncomingBooking for pending)
+  // acceptBooking from pending card
   const acceptBooking = async () => {
     try {
       const driverId = await AsyncStorage.getItem("driverId");
@@ -460,16 +875,28 @@ export default function DHome() {
         Alert.alert("Error", "Missing driverId or booking id.");
         return;
       }
+
+      dbg("DHOME:acceptBooking", { bookingId: incomingBooking?.id, driverId });
+
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingId: incomingBooking.id, driverId }),
       });
+
       const result = await res.json();
       if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
-      let booking = result.booking;
+      let booking = result.booking as any;
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
+      console.log("[DHOME] booking raw from backend →", result.booking);
 
+      const [pickupLabel, destinationLabel] = await Promise.all([
+        getPlaceLabel(booking.pickupLat, booking.pickupLng),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
+      ]);
+
+      let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
           const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
@@ -477,6 +904,7 @@ export default function DHome() {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
             if (p) {
+              passengerProfile = p;
               const buildName = (x: any) => [x.firstName, x.middleName, x.lastName].filter(Boolean).join(" ");
               booking = { ...booking, passengerName: buildName(p) };
             }
@@ -484,20 +912,40 @@ export default function DHome() {
         } catch {}
       }
 
+      const displayName = pickDisplayName(booking, passengerProfile);
+      const displayPhone = pickDisplayPhone(booking, passengerProfile);
+      booking = { ...booking, displayName, displayPhone };
+
+      booking = {
+        ...booking,
+        pickupLabel,
+        destinationLabel,
+        bookingType: booking.bookingType || "CLASSIC",
+        partySize: booking.partySize || 1,
+      };
+      const jobId = String(booking.id);
+
       setIncomingBooking(booking);
-      bookingIdRef.current = String(booking.id);
-      setConfirmed(true);
-      setPhase("toPickup");
-      setActiveJobs(prev => (prev.some(j => String(j.id) === String(booking.id)) ? prev : [...prev, booking]));
+      bookingIdRef.current = jobId;
+      setActiveBookingId(jobId);
+
+      setActiveJobs((prev) => (prev.some((j) => String(j.id) === jobId) ? prev : [...prev, booking]));
+
+      setJobStateById((prev) => ({
+        ...prev,
+        [jobId]: prev[jobId] || { phase: "toPickup", pickedUp: false, paymentConfirm: false },
+      }));
 
       const check = validateBooking(booking);
       if (!check.valid) Alert.alert("Booking data issue", check.issues.join(", "));
 
-      mapRef.current?.postMessage(JSON.stringify({
-        type: "setPassengerMarkers",
-        pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
-        destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
-      }));
+      mapRef.current?.postMessage(
+        JSON.stringify({
+          type: "setPassengerMarkers",
+          pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
+          destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
+        })
+      );
     } catch (error: any) {
       console.error("❌ Error accepting booking:", error);
       Alert.alert("Error", error.message ?? "Failed to accept booking.");
@@ -508,22 +956,18 @@ export default function DHome() {
   useFocusEffect(
     React.useCallback(() => {
       const onBackPress = () => {
-        Alert.alert(
-          "Logout",
-          "Are you sure you want to log out?",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Yes",
-              onPress: async () => {
-                setIsOnline(false);
-                updateDriverStatus(false);
-                await AsyncStorage.clear();
-                router.push("/login_and_reg/dlogin");
-              },
+        Alert.alert("Logout", "Are you sure you want to log out?", [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Yes",
+            onPress: async () => {
+              setIsOnline(false);
+              updateDriverStatus(false);
+              await AsyncStorage.clear();
+              router.push("/login_and_reg/dlogin");
             },
-          ]
-        );
+          },
+        ]);
         return true;
       };
       const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress);
@@ -534,70 +978,205 @@ export default function DHome() {
   // reflect focused accepted job markers
   useEffect(() => {
     if (!mapRef.current || !incomingBooking) return;
-    mapRef.current.postMessage(JSON.stringify({
-      type: "setPassengerMarkers",
-      pickup: { latitude: incomingBooking.pickupLat, longitude: incomingBooking.pickupLng },
-      destination: { latitude: incomingBooking.destinationLat, longitude: incomingBooking.destinationLng }
-    }));
+    mapRef.current.postMessage(
+      JSON.stringify({
+        type: "setPassengerMarkers",
+        pickup: { latitude: incomingBooking.pickupLat, longitude: incomingBooking.pickupLng },
+        destination: { latitude: incomingBooking.destinationLat, longitude: incomingBooking.destinationLng },
+      })
+    );
   }, [incomingBooking]);
 
-  // fetch PoPas & paint markers even while on a job (until capacity is full)
+  // fetch PoPas & paint markers
   useEffect(() => {
     let timer: any;
 
     const fetchQueue = async () => {
       try {
-        if (!isOnline) {
+        if (!isOnline || isFull) {
           setQueue([]);
-          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
-          return;
-        }
-
-        const isFull = capacity !== null && activeJobs.length >= capacity;
-        if (isFull) {
-          setQueue([]);
-          mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+          setPreviewBooking(null);
+          mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
           return;
         }
 
         const center = driverLoc
           ? { lat: driverLoc.lat, lng: driverLoc.lng }
-          : (location ? { lat: location.latitude, lng: location.longitude } : null);
+          : location
+          ? { lat: location.latitude, lng: location.longitude }
+          : null;
+
         if (!center) return;
 
-        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10`;
-        const r = await fetch(url);
-        const data = await r.json();
-        const list = Array.isArray(data) ? data : [];
+        const driverId = await AsyncStorage.getItem("driverId");
+        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${
+          driverId ? `&driverId=${driverId}` : ""
+        }&ai=1`;
 
+        const r = await fetch(url);
+        const text = await r.text();
+        let data: any = [];
+        try {
+          data = JSON.parse(text);
+        } catch {
+          console.log("❌ [DHOME] waiting-bookings non-JSON:", text.slice(0, 200));
+        }
+
+        if (!r.ok || !Array.isArray(data)) {
+          setQueue([]);
+          setPreviewBooking(null);
+          mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
+          return;
+        }
+
+        const list = data as any[];
         setQueue(list);
 
-        // paint PoPas markers regardless of confirmed/phase (since not full)
-        mapRef.current?.postMessage(JSON.stringify({
-          type: 'setWaitingMarkers',
-          items: list.map((q: any) => ({
-            id: q.id,
-            lat: q.pickup.lat,
-            lng: q.pickup.lng,
-          })),
-        }));
+        if (previewBooking && !list.some((q: any) => String(q.id) === String(previewBooking.id))) {
+          setPreviewBooking(null);
+        }
+
+        mapRef.current?.postMessage(
+          JSON.stringify({
+            type: "setWaitingMarkers",
+            items: list.map((q: any) => ({
+              id: q.id,
+              lat: q.pickup.lat,
+              lng: q.pickup.lng,
+              bookingType: q.bookingType || "CLASSIC",
+            })),
+          })
+        );
       } catch (e) {
-        console.log("❌ queue fetch error", e);
+        console.log("❌ [DHOME] queue fetch error", e);
+        setQueue([]);
+        setPreviewBooking(null);
+        mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
       }
     };
 
     fetchQueue();
     timer = setInterval(fetchQueue, 3000);
     return () => clearInterval(timer);
-  }, [isOnline, driverLoc, location, capacity, activeJobs]);
+  }, [isOnline, driverLoc, location, capacity, activeJobs, isFull]);
 
-  // when going offline or becoming full → clear PoPas markers
   useEffect(() => {
-    const isFull = capacity !== null && activeJobs.length >= capacity;
-    if (!isOnline || isFull) {
-      mapRef.current?.postMessage(JSON.stringify({ type: 'setWaitingMarkers', items: [] }));
+    const full = capacity !== null && activeJobs.length >= capacity;
+    if (full || incomingBooking) {
+      if (previewBooking) setPreviewBooking(null);
     }
-  }, [isOnline, capacity, activeJobs]);
+  }, [capacity, activeJobs, incomingBooking]);
+
+  useEffect(() => {
+    if (!isOnline || isFull) {
+      mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
+    }
+  }, [isOnline, isFull]);
+
+  const handleToggleOnline = () => {
+    const newStatus = !isOnline;
+    setIsOnline(newStatus);
+    updateDriverStatus(newStatus);
+  };
+
+  const handleSelectActiveJob = (job: any) => {
+    const id = String(job.id);
+    setActiveBookingId(id);
+    setIncomingBooking(job);
+    setMinimized(false);
+    setJobStateById((prev) => ({ ...prev, [id]: prev[id] || defaultJobState }));
+  };
+
+  const openChatForBooking = (booking: any | null) => {
+    if (!booking || !driverId || !booking.passengerId) return;
+    router.push({
+      pathname: "/ChatRoom",
+      params: {
+        bookingId: String(booking.id),
+        driverId: driverId,
+        passengerId: String(booking.passengerId),
+        role: "driver",
+      },
+    });
+  };
+
+  const markPickedUp = () => {
+    if (!incomingBooking?.id) return;
+    const id = String(incomingBooking.id);
+    setJobStateById((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || defaultJobState), pickedUp: true, phase: "toDropoff" },
+    }));
+  };
+
+  const markDropOff = () => {
+    if (!incomingBooking?.id) return;
+    const id = String(incomingBooking.id);
+    setJobStateById((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || defaultJobState), pickedUp: true, phase: "toDropoff", paymentConfirm: true },
+    }));
+  };
+
+  const handleConfirmPayment = async () => {
+    try {
+      const idToComplete =
+        bookingIdRef.current || incomingBooking?.id || incomingBooking?.bookingId || incomingBooking?._id;
+
+      if (!idToComplete) {
+        Alert.alert("❌ Error", "Missing booking id.");
+        return;
+      }
+
+      dbg("DHOME:confirmPayment", { bookingId: idToComplete });
+
+      const res = await fetch(`${API_BASE_URL}/api/complete-booking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId: idToComplete }),
+      });
+
+      if (res.ok) {
+        Alert.alert("✅ Payment Confirmed", "Transaction completed!");
+
+        const idStr = String(idToComplete);
+
+        setActiveJobs((prev) => {
+          const next = prev.filter((j) => String(j.id) !== idStr);
+          setActiveBookingId((old) => (old && String(old) === idStr ? null : old));
+          return next;
+        });
+
+        setJobStateById((prev) => {
+          const copy = { ...prev };
+          delete copy[idStr];
+          return copy;
+        });
+
+        bookingIdRef.current = null;
+
+        mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+        mapRef.current?.postMessage(JSON.stringify({ type: "setPassengerMarkers", pickup: null, destination: null }));
+
+        setIncomingBooking(() => null);
+      } else {
+        Alert.alert("❌ Error", "Failed to mark booking as complete.");
+      }
+    } catch (error) {
+      console.error("❌ Error confirming payment:", error);
+      Alert.alert("❌ Error", "Something went wrong.");
+    }
+  };
+
+  const showIncomingCard = !!incomingBooking && !dropoff && !confirmed && !minimized && !previewBooking;
+
+  const showCapOverlay = isOnline;
+  const showTodaPill = isOnline && currentToda && inTodaZone;
+
+  const showGcashQR =
+    focusedJobState.paymentConfirm &&
+    incomingBooking?.paymentMethod?.toLowerCase() === "gcash" &&
+    incomingBooking?.driverPayment?.qrUrl;
 
   return (
     <View style={styles.container}>
@@ -607,287 +1186,275 @@ export default function DHome() {
 
       {mapHtml && (
         <WebView
-          ref={(ref) => { if (ref && !mapRef.current) mapRef.current = ref; }}
+          ref={(ref) => {
+            if (ref && !mapRef.current) mapRef.current = ref;
+          }}
           originWhitelist={["*"]}
           source={{ html: mapHtml }}
           javaScriptEnabled
           style={styles.map}
+          onLoadEnd={() => setMapReady(true)}
           onMessage={(e) => {
             try {
               const msg = JSON.parse(e.nativeEvent.data);
 
-              if (msg?.type === 'waitingMarkerTapped') {
-                const isFull = capacity !== null && activeJobs.length >= capacity;
+              if (msg?.type === "waitingMarkerTapped") {
                 if (isFull) {
                   Alert.alert("Capacity full", "You’ve reached your passenger limit.");
                   return;
                 }
-                const q = queue.find(x => String(x.id) === String(msg.bookingId));
+                const q = queue.find((x) => String(x.id) === String(msg.bookingId));
                 if (q) {
-                  setPreviewBooking({
-                    id: q.id,
-                    pickupLat: q.pickup.lat,
-                    pickupLng: q.pickup.lng,
-                    destinationLat: q.destination.lat,
-                    destinationLng: q.destination.lng,
-                    fare: q.fare,
-                    passengerName: q.passengerPreview?.name || "Passenger",
-                    paymentMethod: "",
-                    notes: "",
-                    status: "pending",
-                  });
+                  (async () => {
+                    const pickupLabel = await getPlaceLabel(q.pickup.lat, q.pickup.lng);
+                    const destinationLabel = await getPlaceLabel(q.destination.lat, q.destination.lng);
+
+                    setPreviewBooking({
+                      id: q.id,
+                      pickupLat: q.pickup.lat,
+                      pickupLng: q.pickup.lng,
+                      destinationLat: q.destination.lat,
+                      destinationLng: q.destination.lng,
+                      pickupLabel,
+                      destinationLabel,
+                      fare: q.fare,
+
+                      bookedFor: !!q.passengerPreview?.bookedFor,
+                      riderName: q.passengerPreview?.bookedFor ? q.passengerPreview?.name || "Rider" : "",
+                      riderPhone: "",
+
+                      passengerName: q.passengerPreview?.name || "Passenger",
+                      displayName:
+                        q.passengerPreview?.bookedFor && q.passengerPreview?.name
+                          ? q.passengerPreview.name
+                          : q.passengerPreview?.name || "Passenger",
+
+                      status: "pending",
+                      bookingType: q.bookingType,
+                      partySize: q.partySize || 1,
+                    });
+                  })();
                 }
                 return;
               }
-
-              if (msg?.log) dbg("MAP→RN", msg.log);
-              if (msg?.error) {
-                dbg("MAP ERROR", msg.error);
-                Alert.alert("Map error", msg.error);
-              }
-            } catch {
-              dbg("MAP RAW", e.nativeEvent.data);
-            }
+              Alert.alert("Map error", msg.error);
+            } catch {}
           }}
         />
       )}
 
-      {/* Accepted passengers list */}
-      {isOnline && activeJobs.length > 0 && (
-        <View style={[styles.popup, { backgroundColor: '#eef6ff' }]}>
-          <Text style={styles.popupTitle}>
-            👥 Accepted Passengers ({activeJobs.length}{capacity !== null ? ` / ${capacity}` : ''})
-          </Text>
-
-          {activeJobs.map((job: any) => (
-            <TouchableOpacity
-              key={job.id}
-              style={{ paddingVertical: 8 }}
-              onPress={() => {
-                setIncomingBooking(job);
-                setMinimized(false);
-              }}
-            >
-              <Text>
-                #{job.id}
-                {job?.passengerName ? ` • ${job.passengerName}` : ""}
-                {" • "}
-                {Number(job.pickupLat)?.toFixed?.(4) ?? "-"},
-                {Number(job.pickupLng)?.toFixed?.(4) ?? "-"}
-                {" → "}
-                {Number(job.destinationLat)?.toFixed?.(4) ?? "-"},
-                {Number(job.destinationLng)?.toFixed?.(4) ?? "-"}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {showCapOverlay && (
+        <View pointerEvents="box-none" style={styles.capOverlay}>
+          <View style={[styles.capPill, isFull && styles.capPillFull]}>
+            <Text style={styles.capText}>
+              {totalSeats != null ? `${usedSeats}/${totalSeats} cap` : `${usedSeats} cap`}
+            </Text>
+          </View>
         </View>
       )}
 
-      {/* NEW: PoPas preview card (from yellow tag tap) */}
-      {previewBooking && !minimized && (
-        <View style={styles.popup}>
-          <Text style={styles.popupTitle}>🧍 Potential Passenger</Text>
-
-          <Text>
-            From: {Number(previewBooking.pickupLat).toFixed(4)}, {Number(previewBooking.pickupLng).toFixed(4)}
-          </Text>
-          <Text>
-            To: {Number(previewBooking.destinationLat).toFixed(4)}, {Number(previewBooking.destinationLng).toFixed(4)}
-          </Text>
-          <Text>Fare: ₱{previewBooking.fare}</Text>
-          <Text>Passenger: {previewBooking.passengerName}</Text>
-
-          <TouchableOpacity style={styles.acceptButton} onPress={acceptPreview}>
-            <Text style={{ color: 'white', textAlign: 'center' }}>ACCEPT</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setPreviewBooking(null)}>
-            <Text style={{ marginTop: 10, padding: 5, backgroundColor: "#81C3E1", color: 'white', borderRadius: 5, textAlign: 'center' }}>
-              Back to Map
-            </Text>
-          </TouchableOpacity>
+      {showTodaPill && (
+        <View pointerEvents="box-none" style={[styles.capOverlay, { top: 80 }]}>
+          <View style={[styles.capPill, { backgroundColor: "#1e88e5" }]}>
+            <Text style={styles.capText}>Inside TODA: {currentToda?.name || "Unknown TODA"}</Text>
+          </View>
         </View>
       )}
 
-      {/* (Optional legacy) Pending card if something sets incomingBooking before accept */}
-      {incomingBooking && !dropoff && !confirmed && !minimized && !previewBooking && (
-        <View style={styles.popup}>
-          <Text style={styles.popupTitle}>🚕 Incoming Booking</Text>
-          <Text>
-            From: {Number(incomingBooking?.pickupLat)?.toFixed?.(4) ?? "-"}, {Number(incomingBooking?.pickupLng)?.toFixed?.(4) ?? "-"}
-          </Text>
-          <Text>
-            To: {Number(incomingBooking?.destinationLat)?.toFixed?.(4) ?? "-"}, {Number(incomingBooking?.destinationLng)?.toFixed?.(4) ?? "-"}
-          </Text>
-          <Text>Fare: ₱{incomingBooking?.fare ?? "-"}</Text>
-          <Text>Passenger: {incomingBooking?.passengerName ?? "Passenger"}</Text>
+      {/* ✅ NEW: Task + pwApp overlay stack (above bottom bar) */}
+      {isOnline && (
+        <View pointerEvents="box-none" style={styles.taskPwOverlay}>
+          {taskPwMinimized ? (
+            <View style={styles.taskPwMiniRow} pointerEvents="auto">
+              <TouchableOpacity
+                style={styles.taskPwMiniBtn}
+                onPress={() => setTaskPwMinimized(false)}
+              >
+                <Text style={styles.taskPwMiniText}>▲ Show Tasks & pwApp</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View pointerEvents="auto" style={styles.taskPwCardWrap}>
+              {/* header row with minimize */}
+              <View style={styles.taskPwHeaderRow}>
+                <Text style={styles.taskPwHeaderTitle}>Quick Panel</Text>
 
-          <TouchableOpacity style={styles.acceptButton} onPress={acceptBooking}>
-            <Text style={{ color: 'white', textAlign: 'center' }}>ACCEPT</Text>
-          </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.taskPwMinBtn}
+                  onPress={() => setTaskPwMinimized(true)}
+                >
+                  <Text style={styles.taskPwMinBtnText}>Minimize</Text>
+                </TouchableOpacity>
+              </View>
 
-          <TouchableOpacity onPress={() => { setIncomingBooking(null); setMinimized(false); }}>
-            <Text style={{ marginTop: 10, padding: 5, backgroundColor: "#81C3E1", color: 'white', borderRadius: 5, textAlign: 'center' }}>
-              Back to Queue
-            </Text>
-          </TouchableOpacity>
+              <TaskProgressBar
+                active={tasks.active}
+                pending={tasks.pending}
+                onComplete={async (taskId) => {
+                  await tasks.completeTask(taskId);
+                }}
+              />
+
+              <PwAppPanel
+                list={pwapp.list}
+                onAdd={pwapp.addPassenger}
+                onDropoff={pwapp.dropoff}
+              />
+            </View>
+          )}
         </View>
+      )}
+
+      <AcceptedPassengersList
+        isOnline={isOnline}
+        activeJobs={activeJobs}
+        capacity={capacity}
+        onSelectJob={handleSelectActiveJob}
+      />
+
+      <PreviewBookingCard previewBooking={previewBooking} onAccept={acceptPreview} onClose={() => setPreviewBooking(null)} />
+
+      {showIncomingCard && (
+        <IncomingBookingCard
+          incomingBooking={incomingBooking}
+          onAccept={acceptBooking}
+          onBack={() => {
+            setIncomingBooking(null);
+            setMinimized(false);
+          }}
+        />
       )}
 
       {minimized && (
-        <TouchableOpacity
-          style={{ position: "absolute", bottom: 80, left: 20, backgroundColor: "white", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "black"}}
-          onPress={() => setMinimized(false)}
-        >
+        <TouchableOpacity style={styles.minimizedButton} onPress={() => setMinimized(false)}>
           <Text>🔍 View Booking Info</Text>
         </TouchableOpacity>
       )}
 
-      {/* Accepted job workflow */}
-      {confirmed && !minimized && !paymentConfirm && (
-        <View style={styles.popup}>
-          <Text style={{ fontWeight: 'bold', color: '#4caf50' }}>✅ Booking Confirmed!</Text>
-          {!pickedUp ? (
-            <>
-              <Text>🕒 Waiting for pickup...</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: '#4caf50', padding: 10, marginTop: 10, borderRadius: 5 }}
-                onPress={() => { setPhase("toDropoff"); setPickedUp(true); }}
-              >
-                <Text style={{ color: 'white', textAlign: 'center' }}>🚕 Picked Up</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <Text>🟢 Passenger picked up! Ready for drop-off.</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: '#2196f3', padding: 10, marginTop: 10, borderRadius: 5 }}
-                onPress={() => {
-                  setPickedUp(false);
-                  setConfirmed(false);
-                  setDropOff(true);
-                  setPaymentConfirm(true);
-                }}
-              >
-                <Text style={{ color: 'white', textAlign: 'center' }}>📦 Drop Off</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          <TouchableOpacity onPress={() => setMinimized(true)}>
-            <Text style={{ marginTop: 10, padding: 5, backgroundColor: "#81C3E1", color: 'white', borderRadius: 5, textAlign: 'center' }}>
-              Minimize
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {paymentConfirm && !minimized && (
-        <View style={styles.popup}>
-          <Text style={{ fontWeight: 'bold', color: '#ff9800' }}>💰 Confirm Payment</Text>
-          <Text>Ask the passenger for payment and confirm here.</Text>
-          <TouchableOpacity
-            style={{ backgroundColor: '#4caf50', padding: 10, marginTop: 10, borderRadius: 5 }}
-            onPress={async () => {
-              try {
-                const idToComplete = bookingIdRef.current || incomingBooking?.id;
-                if (!idToComplete) {
-                  Alert.alert("❌ Error", "Missing booking id.");
-                  return;
-                }
-                const res = await fetch(`${API_BASE_URL}/api/complete-booking`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ bookingId: idToComplete }),
-                });
-
-                if (res.ok) {
-                  Alert.alert("✅ Payment Confirmed", "Transaction completed!");
-                  setPhase("idle");
-                  setConfirmed(false);
-                  setIncomingBooking(null);
-                  setPickedUp(false);
-                  setDropOff(false);
-                  setPaymentConfirm(false);
-                  setMinimized(false);
-                  setActiveJobs(prev => prev.filter(j => String(j.id) !== String(idToComplete)));
-                  bookingIdRef.current = null;
-
-                  mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
-                  mapRef.current?.postMessage(JSON.stringify({
-                    type: "setPassengerMarkers",
-                    pickup: null,
-                    destination: null,
-                  }));
-                } else {
-                  Alert.alert("❌ Error", "Failed to mark booking as complete.");
-                }
-              } catch (error) {
-                console.error("❌ Error confirming payment:", error);
-                Alert.alert("❌ Error", "Something went wrong.");
-              }
-            }}
-          >
-            <Text style={{ color: 'white', textAlign: 'center' }}>✅ Payment Confirmed</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setMinimized(true)}>
-            <Text style={{ marginTop: 10, padding: 5, backgroundColor: "#81C3E1", color: 'white', borderRadius: 5, textAlign: 'center' }}>
-              Minimize
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <View style={styles.statusBar}>
-        <Switch
-          style={{ marginRight: 10 }}
-          trackColor={{ false: '#ccc', true: '#37982a' }}
-          thumbColor="white"
-          ios_backgroundColor="black"
-          onValueChange={() => {
-            const newStatus = !isOnline;
-            setIsOnline(newStatus);
-            updateDriverStatus(newStatus);
-          }}
-          value={isOnline}
+      {showWorkflowCard && (
+        <WorkflowCard
+          isPickedUp={isPickedUp}
+          onChat={() => openChatForBooking(incomingBooking)}
+          onPickedUp={markPickedUp}
+          onDropOff={markDropOff}
+          onMinimize={() => setMinimized(true)}
         />
-        <Text style={styles.statusText}>
-          {isOnline
-            ? incomingBooking
-              ? `📦 Active ride`
-              : `You're online.${capacity !== null ? ` Capacity: ${activeJobs.length}/${capacity}` : ""}`
-            : "You're offline."}
-        </Text>
-      </View>
+      )}
+
+      {showPaymentCard && (
+        <PaymentCard
+          showGcashQR={!!showGcashQR}
+          gcashQrUrl={incomingBooking?.driverPayment?.qrUrl}
+          onChat={() => openChatForBooking(incomingBooking)}
+          onConfirmPayment={handleConfirmPayment}
+          onMinimize={() => setMinimized(true)}
+        />
+      )}
+
+      <DriverStatusBar
+        isOnline={isOnline}
+        hasIncoming={!!incomingBooking}
+        capacity={capacity}
+        activeJobsCount={activeJobs.length}
+        onToggleOnline={handleToggleOnline}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, marginBottom: 0 },
-  map: { position: "absolute", top: 0, left: 0, right: 0, bottom: -30 },
-  statusBar: {
-    position: 'absolute',
-    bottom: 10,
-    backgroundColor: '#80C3E1',
-    width: width,
-    padding: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
+  map: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: -30,
   },
-  statusText: { color: 'black', fontSize: 14, fontWeight: '500' },
-  popup: {
-    position: 'absolute',
-    bottom: 10,
-    left: 20,
-    right: 20,
-    padding: 15,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    elevation: 5,
+  capOverlay: {
+    position: "absolute",
+    top: 50,
+    right: 12,
     zIndex: 99,
   },
-  popupTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 5 },
-  acceptButton: { backgroundColor: '#4caf50', padding: 10, borderRadius: 5, marginTop: 10 },
+  capPill: {
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  capPillFull: { backgroundColor: "#dc3545" },
+  capText: { color: "#fff", fontWeight: "600" },
+  minimizedButton: {
+    position: "absolute",
+    bottom: 80,
+    left: 20,
+    backgroundColor: "white",
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "black",
+  },
+
+  // ✅ NEW: overlay container for Tasks + pwApp
+  taskPwOverlay: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 88, // above DriverStatusBar
+    zIndex: 120,
+    gap: 8,
+  },
+
+  taskPwCardWrap: {
+    gap: 8,
+  },
+
+  taskPwHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+
+  taskPwHeaderTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  taskPwMinBtn: {
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+
+  taskPwMinBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  taskPwMiniRow: {
+    alignItems: "center",
+  },
+
+  taskPwMiniBtn: {
+    backgroundColor: "rgba(17,24,39,0.92)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+
+  taskPwMiniText: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 12,
+  },
 });

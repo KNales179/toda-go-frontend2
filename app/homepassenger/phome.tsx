@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { View, 
   Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, 
   TextInput, Alert, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, 
-  Keyboard, Image, BackHandler, ScrollView, AppState, Linking  } from "react-native";
+  Keyboard, Image, BackHandler, ScrollView, AppState, Linking, Animated, Easing  } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { WebView } from "react-native-webview";
 import type { WebView as WebViewType } from "react-native-webview";
@@ -28,6 +28,8 @@ import { calculateFare, DiscountType, FareConfigState } from "./subfile/utils/fa
 import { ensureLocationEnabled } from "./subfile/utils/locationUtils";
 import PassengerRatingModal from "./subfile/components/PassengerRatingModal";
 import PassengerReportModal from "./subfile/components/PassengerReportModal";
+import * as MediaLibrary from "expo-media-library";
+import { Modal } from "react-native"; 
 
 
 const { width } = Dimensions.get("window");
@@ -237,6 +239,50 @@ export default function PHome() {
   const toLatLng = (p:{latitude:number; longitude:number}) => ({ lat: p.latitude, lng: p.longitude });
   const acceptedNotifiedRef = useRef(false);
   const completedNotifiedRef = useRef(false);
+  const [fabOpen, setFabOpen] = useState(false);
+  const fabAnim = useRef(new Animated.Value(0)).current; // 0 closed, 1 open
+  const [showFareInfo, setShowFareInfo] = useState(false);
+
+  // ordinance constants (hardcoded for now)
+  const REG_BASE_FARE = 20;       // first 2 km (per passenger)
+  const REG_BASE_KM = 2;
+  const REG_ADD_PER_KM = 5;       // every succeeding km or fraction (per passenger)
+
+  // computes "every succeeding km OR FRACTION thereof" => ceil
+  const computeAdditionalUnits = (distanceKm: number) => {
+    const extra = Math.max(0, distanceKm - REG_BASE_KM);
+    return Math.ceil(extra); // fraction counts as 1
+  };
+
+  const distanceKmText =
+    typeof lastDistanceKm === "number" ? `${lastDistanceKm.toFixed(2)} km` : "—";
+
+  const additionalUnits =
+    typeof lastDistanceKm === "number" ? computeAdditionalUnits(lastDistanceKm) : 0;
+
+  const baseFare = REG_BASE_FARE;
+  const additionalFare = additionalUnits * REG_ADD_PER_KM;
+
+  // per passenger fare (Regular)
+  const perPassengerFare = baseFare + additionalFare;
+
+  // total depends on booking type
+  const passengerCount = bookingType === "GROUP" ? partySize : 1;
+  const totalFare = perPassengerFare * passengerCount;
+
+  const toggleFabMenu = () => {
+    const toValue = fabOpen ? 0 : 1;
+
+    setFabOpen(!fabOpen);
+
+    Animated.timing(fabAnim, {
+      toValue,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  };
+
 
 
 
@@ -397,6 +443,16 @@ export default function PHome() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!mapReady) return;
+
+    sendToMap({
+      type: "setPassengerType",
+      passengerType: bookingType,
+    });
+  }, [bookingType, mapReady]);
+
 
   // useEffect(() => {
   //   const sub = Notifications.addNotificationReceivedListener(async (notif) => {
@@ -928,10 +984,6 @@ export default function PHome() {
     return () => sub?.remove();
   }, [avatarUrl, location, pickup]);
 
-
-  
-
-
   useEffect(() => {
     let headSub: Location.LocationSubscription | null = null;
 
@@ -955,9 +1007,6 @@ export default function PHome() {
 
     return () => headSub?.remove();
   }, []);
-
-
-
 
   // ---------------------------------------------------------
 
@@ -1348,8 +1397,6 @@ export default function PHome() {
     sendToMap({ type: 'setPickup', latitude: pickup.latitude, longitude: pickup.longitude });
   }, [pickup]);
 
-
-
   const gate = loading || !pickup;
 
   const handleBookNow = async () => {
@@ -1458,6 +1505,44 @@ export default function PHome() {
       setSearching(false);
     }
   };
+
+  const downloadDriverGcashQr = async () => {
+    try {
+      const qrUrl = paymentInfo?.driverPayment?.qrUrl; // <-- from /payment-info
+
+      if (!qrUrl) {
+        Alert.alert("No QR code", "Driver has no GCash QR uploaded.");
+        return;
+      }
+
+      // Ask permission to save to gallery (Android/iOS)
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission needed", "Allow Photos permission to save the QR.");
+        return;
+      }
+
+      // Make a local filename
+      const fileUri = FileSystem.documentDirectory + `gcash_qr_${Date.now()}.png`;
+
+      // Download
+      const dl = await FileSystem.downloadAsync(qrUrl, fileUri);
+
+      // Save to gallery
+      const asset = await MediaLibrary.createAssetAsync(dl.uri);
+
+      // Optional: Put it in an album (Android mostly)
+      if (Platform.OS === "android") {
+        await MediaLibrary.createAlbumAsync("TodaGO", asset, false).catch(() => {});
+      }
+
+      Alert.alert("Saved!", "GCash QR saved to your gallery.");
+    } catch (e: any) {
+      console.log("QR download error:", e?.message || e);
+      Alert.alert("Download failed", "Could not download the QR code.");
+    }
+  };
+
   
 
   useEffect(() => {
@@ -1710,8 +1795,6 @@ export default function PHome() {
     }
   };
 
-
-
   const submitDriverRating = async () => {
     try {
       const driverIdToRate = await AsyncStorage.getItem("driverIdToRate");
@@ -1886,116 +1969,155 @@ export default function PHome() {
             </View>
           </View>
 
-          {/* Floating map controls (bottom-right) */}
           <View
             style={[
               styles.fabContainer,
               showBookingForm
-                ? { bottom: bookingPanelHeight + 20 } // always float ABOVE the panel
-                : { bottom: 120 },                    // default position when panel closed
+                ? { bottom: bookingPanelHeight + 20 }
+                : { bottom: 15 },
             ]}
           >
-            {/* Explore Landmarks */}
-            <TouchableOpacity
-              onPress={() => {
-                if (showLandmarks) {
-                  sendToMap({ type: "clearLandmarks" });
-                  setShowLandmarks(false);
-                } else {
-                  loadLandmarks();
-                  setShowLandmarks(true);
-                }
+            {/* ✅ Hidden buttons container (slides up/down) */}
+            <Animated.View
+              style={{
+                opacity: fabAnim,
+                transform: [
+                  {
+                    translateY: fabAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [20, 0], 
+                    }),
+                  },
+                ],
               }}
+              pointerEvents={fabOpen ? "auto" : "none"}
+            >
+              {/* Explore Landmarks */}
+              <Animated.View
+                style={{
+                  transform: [
+                    {
+                      translateY: fabAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -52 * .2], // topmost
+                      }),
+                    },
+                  ],
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => {
+                    if (showLandmarks) {
+                      sendToMap({ type: "clearLandmarks" });
+                      setShowLandmarks(false);
+                    } else {
+                      loadLandmarks();
+                      setShowLandmarks(true);
+                    }
+                  }}
+                  style={[styles.fabButton, showLandmarks && styles.fabButtonActive]}
+                >
+                  <Ionicons name="map" size={22} color={showLandmarks ? "#fff" : "#333"} />
+                </TouchableOpacity>
+              </Animated.View>
+
+              {/* Show TODA */}
+              <Animated.View
+                style={{
+                  transform: [
+                    {
+                      translateY: fabAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -52 * .1], // middle
+                      }),
+                    },
+                  ],
+                }}
+              >
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (showTodas) {
+                      sendToMap({ type: "clearTodas" });
+                      setShowTodas(false);
+                    } else {
+                      await loadTodas();
+                      setShowTodas(true);
+                    }
+                  }}
+                  style={[styles.fabButton, showTodas && styles.fabButtonActive]}
+                >
+                  <Ionicons name="flag" size={22} color={showTodas ? "#fff" : "#333"} />
+                </TouchableOpacity>
+              </Animated.View>
+
+              {/* Book for someone else */}
+              <Animated.View
+                style={{
+                  transform: [
+                    {
+                      translateY: fabAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -52 * 0], // nearest above menu
+                      }),
+                    },
+                  ],
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => {
+                    const next = !bookedFor;
+                    setBookedFor(next);
+
+                    if (next) {
+                      setSelectingPickup(true);
+                      Alert.alert(
+                        "Book for someone else",
+                        "Tap the map to set the OTHER person's pickup."
+                      );
+                      return;
+                    }
+
+                    setSelectingPickup(false);
+
+                    setDestination(null);
+                    setDropoffName("");
+                    setFare(0);
+
+                    lastRouteDestKeyRef.current = null;
+                    lastRouteFromRef.current = null;
+                    lastRouteToRef.current = null;
+                    lastRouteAtRef.current = 0;
+                    routeFramedRef.current = false;
+
+                    sendToMap({ type: "setMarkers", destination: null, driver: null, pickup: null });
+                    sendToMap({ type: "clearRoute" });
+                    sendToMap({ type: "clearPickup" });
+
+                    if (location) {
+                      const { latitude, longitude } = location;
+                      setPickup({ latitude, longitude });
+                      sendToMap({ type: "setPickup", latitude, longitude });
+                    }
+                  }}
+                  style={[styles.fabButton, bookedFor && styles.fabButtonActive]}
+                >
+                  <Ionicons name="people" size={22} color={bookedFor ? "#fff" : "#333"} />
+                </TouchableOpacity>
+              </Animated.View>
+            </Animated.View>
+
+            {/* ✅ Menu button (always visible) */}
+            <TouchableOpacity
+              onPress={toggleFabMenu}
               style={[
                 styles.fabButton,
-                showLandmarks && styles.fabButtonActive,
+                fabOpen && { backgroundColor: "#111", borderColor: "#111" },
               ]}
             >
-              <Ionicons
-                name="map"
-                size={22}
-                color={showLandmarks ? "#fff" : "#333"}
-              />
-            </TouchableOpacity>
-
-            {/* Show TODA */}
-            <TouchableOpacity
-              onPress={async () => {
-                if (showTodas) {
-                  sendToMap({ type: "clearTodas" });
-                  setShowTodas(false);
-                } else {
-                  await loadTodas();
-                  setShowTodas(true);
-                }
-              }}
-              style={[
-                styles.fabButton,
-                showTodas && styles.fabButtonActive,
-              ]}
-            >
-              <Ionicons
-                name="flag"
-                size={22}
-                color={showTodas ? "#fff" : "#333"} 
-              />
-            </TouchableOpacity>
-
-            {/* Book for someone else */}
-            <TouchableOpacity
-              onPress={() => {
-                const next = !bookedFor;
-                setBookedFor(next);
-
-                if (next) {
-                  // Turning ON: choose someone else's pickup
-                  setSelectingPickup(true);
-                  Alert.alert(
-                    "Book for someone else",
-                    "Tap the map to set the OTHER person's pickup."
-                  );
-                  return;
-                }
-
-                // Turning OFF: full cleanup (like a soft refresh)
-                setSelectingPickup(false);
-
-                // Clear UI state
-                setDestination(null);
-                setDropoffName("");
-                setFare(0);
-
-                // Reset route trackers
-                lastRouteDestKeyRef.current = null;
-                lastRouteFromRef.current = null;
-                lastRouteToRef.current = null;
-                lastRouteAtRef.current = 0;
-                routeFramedRef.current = false;
-
-                // Clear map markers & route
-                sendToMap({ type: "setMarkers", destination: null, driver: null, pickup: null });
-                sendToMap({ type: "clearRoute" });
-                sendToMap({ type: "clearPickup" });
-
-                // Re-seed pickup to current GPS so booking uses BLUE marker
-                if (location) {
-                  const { latitude, longitude } = location;
-                  setPickup({ latitude, longitude });
-                  sendToMap({ type: "setPickup", latitude, longitude });
-                }
-              }}
-              style={[
-                styles.fabButton,
-                bookedFor && styles.fabButtonActive,
-              ]}
-            >
-              <Ionicons
-                name="people"
-                size={22}
-                color={bookedFor ? "#fff" : "#333"} 
-              />
+              <Ionicons name={fabOpen ? "close" : "menu"} size={22} color={fabOpen ? "#fff" : "#333"} />
             </TouchableOpacity>
           </View>
+
 
 
           <View style={styles.overlayContainer}>
@@ -2146,6 +2268,11 @@ export default function PHome() {
                               </Text>
                             </TouchableOpacity>
                           </View>
+                          <TouchableOpacity onPress={downloadDriverGcashQr} activeOpacity={0.7}>
+                            <Text style={{ textDecorationLine: "underline" }}>
+                              Download GCash QR
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       )}
                     </>
@@ -2353,25 +2480,35 @@ export default function PHome() {
                 </ScrollView>
 
                 <View style={styles.fareContainer}>
-                  <View>
-                    <Text style={styles.totalFare}>
-                      Fare:
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={styles.totalFare}>Fare Breakdown</Text>
+
+                      {/* ℹ️ info icon */}
+                      <TouchableOpacity onPress={() => setShowFareInfo(true)}>
+                        <Ionicons name="information-circle-outline" size={18} color="#111" />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text>Distance: {distanceKmText}</Text>
+                    {bookingType === "GROUP" && (
+                      <Text>Passenger Count: {passengerCount}</Text>
+                    )}
+                    <Text>Base Fare: ₱{baseFare.toFixed(2)}</Text>
+                    <Text>
+                      Additional Fare: ₱{additionalFare.toFixed(2)}
                     </Text>
-                    <Text style={{ paddingLeft: 20 }}>
-                      ₱{fare} {bookingType === 'SOLO' ? '(VIP)' : bookingType === 'GROUP' ? `x${partySize}` : ''}
-                    </Text>
-                    <Text style={styles.totalFare}>
-                      Total Fare: ₱
-                      {bookingType === 'GROUP' ? (fare * partySize).toFixed(2) : fare.toFixed(2)}
+                    <Text style={{ marginTop: 4 }}>
+                      Total Fare: ₱{totalFare.toFixed(2)}
                     </Text>
                   </View>
+
                   <TouchableOpacity
                     style={[
                       styles.bookButton,
-                      // disable if invalid group count or no destination
-                      ((bookingType === 'GROUP' && (partySize < 2 || partySize > 6)) || !destination) && { opacity: 0.4 },
+                      ((bookingType === "GROUP" && (partySize < 2 || partySize > 6)) || !destination) && { opacity: 0.4 },
                     ]}
-                    disabled={(bookingType === 'GROUP' && (partySize < 2 || partySize > 6)) || !destination}
+                    disabled={(bookingType === "GROUP" && (partySize < 2 || partySize > 6)) || !destination}
                     onPress={handleBookNow}
                   >
                     <Text style={styles.bookButtonText}>BOOK NOW</Text>
@@ -2441,6 +2578,53 @@ export default function PHome() {
             />
             
           </View>
+          <Modal
+            visible={showFareInfo}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowFareInfo(false)}
+          >
+            <TouchableWithoutFeedback onPress={() => setShowFareInfo(false)}>
+              <View style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.45)",
+                justifyContent: "center",
+                padding: 20,
+              }}>
+                <TouchableWithoutFeedback onPress={() => {}}>
+                  <View style={{
+                    backgroundColor: "#fff",
+                    borderRadius: 12,
+                    padding: 16,
+                  }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={{ fontWeight: "800", fontSize: 16 }}>Fare Matrix (Lucena)</Text>
+                      <TouchableOpacity onPress={() => setShowFareInfo(false)}>
+                        <Ionicons name="close" size={20} color="#111" />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text style={{ marginTop: 10, fontWeight: "700" }}>Regular Fare (Per Passenger)</Text>
+                    <Text>• ₱20.00 for first 2 km (or within City Proper)</Text>
+                    <Text>• +₱5.00 for every succeeding km or fraction</Text>
+                    <Text>• 20% discount for Senior Citizens, PWDs, Students</Text>
+                    <Text>• Regular fare applies on a per passenger basis</Text>
+
+                    <Text style={{ marginTop: 10, fontWeight: "700" }}>Special / Exclusive Hire (Per Trip)</Text>
+                    <Text>• ₱60.00 for first 2 km</Text>
+                    <Text>• If only 1 km: ₱30.00</Text>
+                    <Text>• +₱10.00 for every succeeding km or fraction</Text>
+                    <Text>• 20% discount for Senior Citizens, PWDs, Students</Text>
+                    <Text>• Applies per trip (regardless of passenger count)</Text>
+
+                    <Text style={{ marginTop: 10, fontSize: 12, color: "#444" }}>
+                      Note: This is hardcoded for now. Later we’ll fetch these values from your fare matrix DB so updates reflect automatically.
+                    </Text>
+                  </View>
+                </TouchableWithoutFeedback>
+              </View>
+            </TouchableWithoutFeedback>
+          </Modal>
         </View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>

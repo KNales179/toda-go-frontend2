@@ -9,6 +9,7 @@ type Props = {
   hasIncoming: boolean;
   capacity: number | null;
   activeJobsCount: number;
+  usedSeats: number;
   onToggleOnline: () => void;
 };
 
@@ -17,6 +18,7 @@ export default function DriverStatusBar({
   hasIncoming,
   capacity,
   activeJobsCount,
+  usedSeats,
   onToggleOnline,
 }: Props) {
   return (
@@ -33,7 +35,7 @@ export default function DriverStatusBar({
         {isOnline
           ? hasIncoming
             ? `📦 Active ride`
-            : `You're online.${capacity !== null ? ` Capacity: ${activeJobsCount}/${capacity}` : ""}`
+            : `You're online.${capacity !== null ? ` Capacity: ${usedSeats}/${capacity}` : ""}`
           : "You're offline."}
       </Text>
     </View>

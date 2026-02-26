@@ -58,6 +58,8 @@ const AdminAuthRoutes = require("./routes/Adminauth");
 const blockedRoadRoutes = require("./routes/BlockRoad");
 const bookingRoute = require("./routes/Booking");
 const driverStatusRoute = require("./routes/DriverStatusRoute");
+const tasksRoute = require("./routes/TasksRoute");
+const pwappRoute = require("./routes/pwAppRoute");
 const driverinfo = require("./routes/DriverInfo");
 const passengerinfo = require("./routes/PassengerInfo");
 const statsRoute = require("./routes/Stats");
@@ -78,6 +80,8 @@ const fareConfigRoutes = require("./routes/FareConfig");
 const adminTodaRoutes = require("./routes/adminTodaRoutes");
 const debugLogRoutes = require("./routes/DebugLog");
 const liveMonitorRoutes = require("./routes/liveMonitor");
+const notificationRoutes = require("./routes/Notifications");
+const appealRoutes = require("./routes/Appeals");
 
 // Mount routes AFTER io is attached
 app.use("/api/auth/passenger", passengerRoutes);
@@ -88,6 +92,8 @@ app.use("/api/admin", AdminAuthRoutes);
 app.use("/api", blockedRoadRoutes);
 app.use("/api", bookingRoute);
 app.use("/api", driverStatusRoute);
+app.use("/api", tasksRoute);
+app.use("/api", pwappRoute);
 app.use("/api", driverinfo);
 app.use("/api", passengerinfo);
 app.use("/api/stats", statsRoute);
@@ -108,6 +114,8 @@ app.use("/api", fareConfigRoutes);
 app.use("/api/admin", adminTodaRoutes);
 app.use("/api", debugLogRoutes);
 app.use("/api", liveMonitorRoutes);
+app.use("/api", notificationRoutes)
+app.use("/api/appeals", appealRoutes);
 
 // Static uploads
 app.use("/uploads", express.static("uploads"));

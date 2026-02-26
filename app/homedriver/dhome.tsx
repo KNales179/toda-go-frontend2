@@ -23,7 +23,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import type { AppStateStatus } from "react-native";
 import ChatNotice from "../../components/ChatNotice";
-import { getAuth } from "../utils/authStorage";
+// ❌ removed getAuth usage; using AsyncStorage only
 import * as Clipboard from "expo-clipboard";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Location from "expo-location";
@@ -37,6 +37,11 @@ import IncomingBookingCard from "./subfile/components/IncomingBookingCard";
 import WorkflowCard from "./subfile/components/WorkflowCard";
 import PaymentCard from "./subfile/components/PaymentCard";
 
+// ✅ NEW: task + pwApp UI + hooks
+import TaskProgressBar from "./subfile/components/TaskProgressBar";
+import PwAppPanel from "./subfile/components/PwAppPanel";
+import { useDriverTasks } from "./subfile/hooks/useDriverTasks";
+import { usePwApp } from "./subfile/hooks/usePwApp";
 
 const ENABLE_DEBUG = true;
 const ALLOWED_TAG_PREFIXES = ["PUSH", "DHOME:acceptBooking", "DHOME:confirmPayment"];
@@ -58,13 +63,13 @@ const dbg = async (tag: string, extra?: any) => {
   } catch (e) {}
 };
 
-
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  } as Notifications.NotificationBehavior),
+  handleNotification: async () =>
+    ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    } as Notifications.NotificationBehavior),
 });
 
 const safeJson = async (res: Response, label: string) => {
@@ -94,8 +99,7 @@ function buildLabel(addr: Location.LocationGeocodedAddress | null) {
   const p = [];
   if (addr.name) p.push(addr.name);
   if (addr.street && !p.includes(addr.street)) p.push(addr.street);
-  const city =
-    addr.city || addr.subregion || addr.district || addr.region;
+  const city = addr.city || addr.subregion || addr.district || addr.region;
   if (city) p.push(city);
   return p.filter(Boolean).join(", ") || "Selected location";
 }
@@ -134,9 +138,7 @@ async function ensureLocationEnabled(): Promise<boolean> {
           text: "Open Settings",
           onPress: () => {
             if (Platform.OS === "android") {
-              IntentLauncher.startActivityAsync(
-                IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS
-              );
+              IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS);
             } else {
               Linking.openURL("app-settings:");
             }
@@ -152,7 +154,6 @@ async function ensureLocationEnabled(): Promise<boolean> {
 // ---- Driver push token helper ----
 async function registerDriverPushToken(driverId: string) {
   try {
-    // Ask for permission
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== "granted") {
@@ -169,10 +170,7 @@ async function registerDriverPushToken(driverId: string) {
       (Constants as any)?.easConfig?.projectId ??
       Constants?.manifest2?.extra?.eas?.projectId;
 
-    // 🔹 Get Expo push token (EAS-aware)
-    const tokenResponse = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined
-    );
+    const tokenResponse = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
     const pushToken = tokenResponse.data;
     if (!pushToken) {
       console.log("❌ Failed to get Expo push token for driver");
@@ -181,7 +179,6 @@ async function registerDriverPushToken(driverId: string) {
 
     console.log("📲 Driver push token:", pushToken);
 
-    // Send to backend
     const res = await fetch(`${API_BASE_URL}/api/driver/push-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -190,11 +187,7 @@ async function registerDriverPushToken(driverId: string) {
 
     if (!res.ok) {
       const txt = await res.text();
-      console.log(
-        "❌ /driver/push-token failed",
-        res.status,
-        txt.slice(0, 200)
-      );
+      console.log("❌ /driver/push-token failed", res.status, txt.slice(0, 200));
     } else {
       console.log("✅ Driver push token saved");
     }
@@ -203,21 +196,17 @@ async function registerDriverPushToken(driverId: string) {
   }
 }
 
-
 type Phase = "idle" | "toPickup" | "toDropoff";
 type LatLng = { lat: number; lng: number };
 
-export default function DHome() {
+export default function DHomeTaskPwApp() {
   const { location } = useLocation();
   const [isOnline, setIsOnline] = useState(false);
   const [mapHtml, setMapHtml] = useState("");
   const mapRef = useRef<WebViewType | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
-  const [livePos, setLivePos] = useState<{
-    latitude: number;
-    longitude: number;
-  } | null>(null);
-  const [incomingBooking, setIncomingBooking] = useState<any>(null); // focused accepted job
+  const [livePos, setLivePos] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [incomingBooking, setIncomingBooking] = useState<any>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [dropoff, setDropOff] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -231,14 +220,19 @@ export default function DHome() {
   const heartbeatTimerRef = useRef<number | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const bookingIdRef = useRef<string | null>(null);
-  const [driverPayment, setDriverPayment] =
-    React.useState<{ gcashNumber?: string; gcashQRUrl?: string } | null>(
-      null
-    );
-  const usedSeats = activeJobs.reduce(
-    (sum, job) => sum + (job.partySize || 1),
-    0
+  const [driverPayment, setDriverPayment] = React.useState<{ gcashNumber?: string; gcashQRUrl?: string } | null>(
+    null
   );
+
+  // ✅ NEW: tasks + pwApp hooks (auto poll when online)
+  const tasks = useDriverTasks(driverId || "", isOnline);
+  const pwapp = usePwApp(driverId || "", isOnline);
+
+  const bookingSeats = activeJobs.reduce((sum, job) => sum + (job.partySize || 1), 0);
+  const pwActiveSeats = (pwapp.list || []).filter((p) => p.status === "ACTIVE").length;
+  const usedSeatsUi = bookingSeats + pwActiveSeats;
+
+  const usedSeats = bookingSeats + pwActiveSeats;
   const totalSeats = capacity;
   const isFull = totalSeats != null && usedSeats >= totalSeats;
   const [currentBooking, setCurrentBooking] = useState<any>(null);
@@ -247,6 +241,7 @@ export default function DHome() {
   const [mapReady, setMapReady] = useState(false);
   const msgQ = useRef<string[]>([]);
   const hasRegisteredPushRef = useRef(false);
+  const [taskPwMinimized, setTaskPwMinimized] = useState(false);
 
   const sendToMap = (obj: any) => {
     const s = JSON.stringify(obj);
@@ -256,16 +251,12 @@ export default function DHome() {
     }
     mapRef.current.postMessage(s);
   };
+
   const [jobStateById, setJobStateById] = useState<{
     [id: string]: { phase: Phase; pickedUp: boolean; paymentConfirm: boolean };
   }>({});
-  const defaultJobState = {
-    phase: "toPickup" as Phase,
-    pickedUp: false,
-    paymentConfirm: false,
-  };
+  const defaultJobState = { phase: "toPickup" as Phase, pickedUp: false, paymentConfirm: false };
 
-  // explicit active booking id (driver's chosen job)
   const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
 
   function getJobStateFor(job: any | null) {
@@ -273,17 +264,13 @@ export default function DHome() {
     return jobStateById[job.id] || defaultJobState;
   }
   const focusedJobState = getJobStateFor(incomingBooking);
-  const showWorkflowCard =
-    !!incomingBooking && !minimized && !focusedJobState.paymentConfirm;
+  const showWorkflowCard = !!incomingBooking && !minimized && !focusedJobState.paymentConfirm;
   const isPickedUp = focusedJobState.pickedUp;
-  const showPaymentCard =
-    !!incomingBooking && !minimized && focusedJobState.paymentConfirm;
+  const showPaymentCard = !!incomingBooking && !minimized && focusedJobState.paymentConfirm;
 
   const pickDisplayName = (b: any, passengerProfile?: any) => {
     const acctName = passengerProfile
-      ? [passengerProfile.firstName, passengerProfile.middleName, passengerProfile.lastName]
-          .filter(Boolean)
-          .join(" ")
+      ? [passengerProfile.firstName, passengerProfile.middleName, passengerProfile.lastName].filter(Boolean).join(" ")
       : b.passengerName || "Passenger";
     const rider = (b.riderName || "").trim();
     return b.bookedFor && rider ? rider : acctName;
@@ -292,11 +279,7 @@ export default function DHome() {
   const pickDisplayPhone = (b: any, passengerProfile?: any) => {
     const rider = (b.riderPhone || "").trim();
     if (b.bookedFor && rider) return rider;
-    const p =
-      passengerProfile?.phone ||
-      passengerProfile?.contactNumber ||
-      passengerProfile?.mobile ||
-      "";
+    const p = passengerProfile?.phone || passengerProfile?.contactNumber || passengerProfile?.mobile || "";
     return (p || "").trim();
   };
 
@@ -307,33 +290,24 @@ export default function DHome() {
     }
   }, [mapReady]);
 
-  const status = currentBooking?.status as
-    | "accepted"
-    | "pending"
-    | "completed"
-    | "canceled"
-    | undefined;
+  const status = currentBooking?.status as "accepted" | "pending" | "completed" | "canceled" | undefined;
   const passengerId = currentBooking?.passengerId;
 
-  // Fetch unified/legacy driverId once
+  // ✅ driverId only from AsyncStorage
   useEffect(() => {
     const fetchDriver = async () => {
-      const auth = await getAuth();
       const legacyId = await AsyncStorage.getItem("driverId");
-      const resolved =
-        (auth?.role === "driver" ? auth.userId : null) || legacyId;
-
-      if (!resolved) {
+      if (!legacyId) {
         Alert.alert("Session expired", "Please log in again.");
         router.replace("/login_and_reg/dlogin");
         return;
       }
-      setDriverId(String(resolved));
+      setDriverId(String(legacyId));
     };
     fetchDriver();
   }, []);
 
-  // Once driverId is known, register driver push token (only once)
+  // push token register
   useEffect(() => {
     if (!driverId) return;
     if (hasRegisteredPushRef.current) return;
@@ -341,10 +315,48 @@ export default function DHome() {
     registerDriverPushToken(driverId);
   }, [driverId]);
 
-  const setBookingPaymentStatus = async (
-    bookingId: string,
-    status: "paid" | "failed"
-  ) => {
+  // ✅ NEW: send pwApp pins to map whenever list changes
+  useEffect(() => {
+    if (!isOnline) return;
+    sendToMap({
+      type: "setPwAppMarkers",
+      items: (pwapp.list || []).map((p) => ({
+        id: p._id,
+        lat: p.pickupLat,
+        lng: p.pickupLng,
+        passengerType: p.passengerType,
+        note: p.note || "",
+      })),
+    });
+    
+  }, [isOnline, pwapp.list, mapReady]);
+
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const ordered = [
+      ...tasks.active.map(t => ({...t, status:"ACTIVE"})),
+      ...tasks.pending.map(t => ({...t, status:"PENDING"})),
+    ];
+
+    const activeTaskId = tasks.active?.[0]?._id || null;
+
+    sendToMap({
+      type: "setTaskPlan",
+      activeTaskId,
+      tasks: ordered.map((t, i) => ({
+        id: t._id,
+        lat: t.lat,
+        lng: t.lng,
+        taskType: t.taskType,
+        status: t.status,
+        label: t.place || "",
+      })),
+    });
+  }, [isOnline, tasks.active, tasks.pending, mapReady]);
+  
+
+  const setBookingPaymentStatus = async (bookingId: string, status: "paid" | "failed") => {
     try {
       await fetch(`${API_BASE_URL}/api/booking/${bookingId}/payment-status`, {
         method: "POST",
@@ -354,11 +366,7 @@ export default function DHome() {
     } catch {}
   };
 
-  const canShowChatNotice =
-    status === "accepted" &&
-    !!currentBooking?._id &&
-    !!driverId &&
-    !!passengerId;
+  const canShowChatNotice = status === "accepted" && !!currentBooking?._id && !!driverId && !!passengerId;
 
   const validateBooking = (b: any) => {
     const okNum = (n: any) => typeof n === "number" && Number.isFinite(n);
@@ -380,27 +388,24 @@ export default function DHome() {
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
     const s =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+      Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(s));
   };
 
   useEffect(() => {
     if (!driverLoc && location) {
-      const seeded = {
-        lat: location.latitude,
-        lng: location.longitude,
-      };
+      const seeded = { lat: location.latitude, lng: location.longitude };
       setDriverLoc(seeded);
-      sendToMap({
-        type: "updateDriver",
-        latitude: seeded.lat,
-        longitude: seeded.lng,
-      });
+      sendToMap({ type: "updateDriver", latitude: seeded.lat, longitude: seeded.lng });
     }
   }, [location, isOnline]);
 
   useEffect(() => {
+    if (!driverLoc && !todas.length) {
+      setCurrentToda(null);
+      setInTodaZone(false);
+      return;
+    }
     if (!driverLoc || !todas.length) {
       setCurrentToda(null);
       setInTodaZone(false);
@@ -414,10 +419,7 @@ export default function DHome() {
       const center = { lat: t.latitude, lng: t.longitude };
       const d = haversineMeters(driverLoc, center);
 
-      const r =
-        typeof t.radiusMeters === "number" && t.radiusMeters > 0
-          ? t.radiusMeters
-          : 100;
+      const r = typeof t.radiusMeters === "number" && t.radiusMeters > 0 ? t.radiusMeters : 100;
 
       if (d <= r && d < bestDist) {
         best = t;
@@ -462,21 +464,14 @@ export default function DHome() {
         return null;
       }
 
-      const coords = (feat.geometry?.coordinates || []).map(
-        ([lng, lat]: number[]) => [lat, lng]
-      );
-      const { distance = 0, duration = 0 } =
-        feat.properties?.summary || {};
+      const coords = (feat.geometry?.coordinates || []).map(([lng, lat]: number[]) => [lat, lng]);
+      const { distance = 0, duration = 0 } = feat.properties?.summary || {};
       if (!coords.length) {
         Alert.alert("Routing error", "Route has 0 coordinates");
         return null;
       }
 
-      sendToMap({
-        type: "drawRoute",
-        coords,
-        summary: { distance, duration },
-      });
+      sendToMap({ type: "drawRoute", coords, summary: { distance, duration } });
       return { distance, duration };
     } catch (e: any) {
       Alert.alert("Routing error", e?.message || "Failed to get route");
@@ -537,8 +532,7 @@ export default function DHome() {
             name: t.name,
             lat: t.latitude,
             lng: t.longitude,
-            radius:
-              typeof t.radiusMeters === "number" ? t.radiusMeters : 100,
+            radius: typeof t.radiusMeters === "number" ? t.radiusMeters : 100,
           })),
         });
       } catch (e) {
@@ -568,16 +562,9 @@ export default function DHome() {
         const p = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
-        const seeded = {
-          lat: p.coords.latitude,
-          lng: p.coords.longitude,
-        };
+        const seeded = { lat: p.coords.latitude, lng: p.coords.longitude };
         setDriverLoc(seeded);
-        sendToMap({
-          type: "updateDriver",
-          latitude: seeded.lat,
-          longitude: seeded.lng,
-        });
+        sendToMap({ type: "updateDriver", latitude: seeded.lat, longitude: seeded.lng });
       } catch (e) {
         console.log("[DHOME:GPS] seed error", e);
       }
@@ -591,17 +578,11 @@ export default function DHome() {
         (pos) => {
           const { latitude, longitude, accuracy } = pos.coords;
 
-          if (typeof accuracy === "number" && accuracy > 500) {
-            return;
-          }
+          if (typeof accuracy === "number" && accuracy > 500) return;
 
           const loc = { lat: latitude, lng: longitude };
           setDriverLoc(loc);
-          sendToMap({
-            type: "updateDriver",
-            latitude: loc.lat,
-            longitude: loc.lng,
-          });
+          sendToMap({ type: "updateDriver", latitude: loc.lat, longitude: loc.lng });
         }
       );
     };
@@ -618,14 +599,8 @@ export default function DHome() {
 
       const state = getJobStateFor(incomingBooking);
 
-      const pickup = {
-        lat: incomingBooking.pickupLat,
-        lng: incomingBooking.pickupLng,
-      } as LatLng;
-      const dropoffPt = {
-        lat: incomingBooking.destinationLat,
-        lng: incomingBooking.destinationLng,
-      } as LatLng;
+      const pickup = { lat: incomingBooking.pickupLat, lng: incomingBooking.pickupLng } as LatLng;
+      const dropoffPt = { lat: incomingBooking.destinationLat, lng: incomingBooking.destinationLng } as LatLng;
 
       if (state.phase === "toPickup") {
         const d = haversineMeters(driverLoc, pickup);
@@ -666,15 +641,12 @@ export default function DHome() {
     }
   };
 
-  // driver status update
   const updateDriverStatus = async (newStatus: boolean) => {
     if (!driverId) return;
 
     const center =
       driverLoc ??
-      (location
-        ? { lat: location.latitude, lng: location.longitude }
-        : null);
+      (location ? { lat: location.latitude, lng: location.longitude } : null);
 
     try {
       await fetch(`${API_BASE_URL}/api/driver-status`, {
@@ -683,9 +655,7 @@ export default function DHome() {
         body: JSON.stringify({
           driverId,
           isOnline: newStatus,
-          location: center
-            ? { latitude: center.lat, longitude: center.lng }
-            : undefined,
+          location: center ? { latitude: center.lat, longitude: center.lng } : undefined,
           currentTodaId: currentToda ? currentToda.id : null,
           inTodaZone,
         }),
@@ -738,30 +708,19 @@ export default function DHome() {
 
     const fetchRequests = async () => {
       try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/driver-requests/${driverId}`
-        );
+        const res = await fetch(`${API_BASE_URL}/api/driver-requests/${driverId}`);
         const raw = await safeJson(res, "GET /api/driver-requests");
         const data: any[] = Array.isArray(raw) ? raw : [];
 
         const acceptedOnly = data
-          .filter(
-            (b: any) =>
-              b?.status === "accepted" &&
-              String(b?.driverId || "") === String(driverId)
-          )
+          .filter((b: any) => b?.status === "accepted" && String(b?.driverId || "") === String(driverId))
           .map((b: any) => ({
             ...b,
-            displayName:
-              b.bookedFor && b.riderName
-                ? b.riderName
-                : b.passengerName || "Passenger",
+            displayName: b.bookedFor && b.riderName ? b.riderName : b.passengerName || "Passenger",
           }));
 
         setActiveJobs((prev) => {
-          const prevMap = new Map(
-            prev.map((j: any) => [String(j.id), j])
-          );
+          const prevMap = new Map(prev.map((j: any) => [String(j.id), j]));
           return acceptedOnly.map((b: any) => {
             const key = String(b.id);
             const prevJob = prevMap.get(key);
@@ -772,10 +731,7 @@ export default function DHome() {
         let chosen: any = null;
 
         if (activeBookingId) {
-          chosen =
-            acceptedOnly.find(
-              (b) => String(b.id) === String(activeBookingId)
-            ) || null;
+          chosen = acceptedOnly.find((b) => String(b.id) === String(activeBookingId)) || null;
         }
 
         if (!chosen && acceptedOnly.length > 0) {
@@ -787,21 +743,12 @@ export default function DHome() {
           if (activeBookingId || incomingBooking) {
             console.log("❌ Booking disappeared — cleanup");
             if (incomingBooking) {
-              Alert.alert(
-                "Booking Cancelled",
-                "The passenger has cancelled the booking."
-              );
+              Alert.alert("Booking Cancelled", "The passenger has cancelled the booking.");
             }
 
+            mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
             mapRef.current?.postMessage(
-              JSON.stringify({ type: "clearRoute" })
-            );
-            mapRef.current?.postMessage(
-              JSON.stringify({
-                type: "setPassengerMarkers",
-                pickup: null,
-                destination: null,
-              })
+              JSON.stringify({ type: "setPassengerMarkers", pickup: null, destination: null })
             );
 
             setIncomingBooking(null);
@@ -815,13 +762,7 @@ export default function DHome() {
           return;
         }
 
-        const same =
-          incomingBooking?.id &&
-          String(incomingBooking.id) === String(chosen.id);
-
-        const chosenId = String(
-          chosen.bookingId || chosen.id || chosen._id
-        );
+        const chosenId = String(chosen.bookingId || chosen.id || chosen._id);
         bookingIdRef.current = chosenId;
         setJobStateById((prev) => ({
           ...prev,
@@ -837,17 +778,8 @@ export default function DHome() {
       interval = setInterval(fetchRequests, 5000);
     }
     return () => clearInterval(interval);
-  }, [
-    isOnline,
-    focusedJobState.paymentConfirm,
-    incomingBooking,
-    driverId,
-    activeBookingId,
-    driverLoc,
-    location,
-  ]);
+  }, [isOnline, focusedJobState.paymentConfirm, incomingBooking, driverId, activeBookingId, driverLoc, location]);
 
-  // reflect accepted→confirmed
   useEffect(() => {
     if (incomingBooking && incomingBooking.status === "accepted") {
       setConfirmed(true);
@@ -868,50 +800,32 @@ export default function DHome() {
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bookingId: previewBooking.id,
-          driverId,
-        }),
+        body: JSON.stringify({ bookingId: previewBooking.id, driverId }),
       });
 
       const result = await res.json();
-      if (!res.ok)
-        throw new Error(result?.message || "Failed to accept booking");
+      if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
       let booking = result.booking as any;
-      booking = {
-        ...booking,
-        id: booking.bookingId || booking.id || booking._id,
-      };
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
       console.log("[DHOME] booking raw from backend →", result.booking);
 
       const [pickupLabel, destinationLabel] = await Promise.all([
         getPlaceLabel(booking.pickupLat, booking.pickupLng),
-        getPlaceLabel(
-          booking.destinationLat,
-          booking.destinationLng
-        ),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
       ]);
 
       let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
-          const infoRes = await fetch(
-            `${API_BASE_URL}/api/passenger/${booking.passengerId}`
-          );
+          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
             if (p) {
               passengerProfile = p;
-              const buildName = (x: any) =>
-                [x.firstName, x.middleName, x.lastName]
-                  .filter(Boolean)
-                  .join(" ");
-              booking = {
-                ...booking,
-                passengerName: buildName(p),
-              };
+              const buildName = (x: any) => [x.firstName, x.middleName, x.lastName].filter(Boolean).join(" ");
+              booking = { ...booking, passengerName: buildName(p) };
             }
           }
         } catch {}
@@ -930,19 +844,10 @@ export default function DHome() {
       booking = { ...booking, displayName, displayPhone };
       const jobId = String(booking.id);
 
-      setActiveJobs((prev) =>
-        prev.some((j) => String(j.id) === jobId)
-          ? prev
-          : [...prev, booking]
-      );
+      setActiveJobs((prev) => (prev.some((j) => String(j.id) === jobId) ? prev : [...prev, booking]));
       setJobStateById((prev) => ({
         ...prev,
-        [jobId]:
-          prev[jobId] || {
-            phase: "toPickup",
-            pickedUp: false,
-            paymentConfirm: false,
-          },
+        [jobId]: prev[jobId] || { phase: "toPickup", pickedUp: false, paymentConfirm: false },
       }));
       setActiveBookingId(jobId);
 
@@ -951,23 +856,13 @@ export default function DHome() {
       setPreviewBooking(null);
 
       const check = validateBooking(booking);
-      if (!check.valid)
-        Alert.alert(
-          "Booking data issue",
-          check.issues.join(", ")
-        );
+      if (!check.valid) Alert.alert("Booking data issue", check.issues.join(", "));
 
       mapRef.current?.postMessage(
         JSON.stringify({
           type: "setPassengerMarkers",
-          pickup: {
-            latitude: booking.pickupLat,
-            longitude: booking.pickupLng,
-          },
-          destination: {
-            latitude: booking.destinationLat,
-            longitude: booking.destinationLng,
-          },
+          pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
+          destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
         })
       );
     } catch (error: any) {
@@ -985,58 +880,37 @@ export default function DHome() {
         return;
       }
 
-      dbg("DHOME:acceptBooking", {
-        bookingId: incomingBooking?.id,
-        driverId,
-      });
+      dbg("DHOME:acceptBooking", { bookingId: incomingBooking?.id, driverId });
 
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bookingId: incomingBooking.id,
-          driverId,
-        }),
+        body: JSON.stringify({ bookingId: incomingBooking.id, driverId }),
       });
 
       const result = await res.json();
-      if (!res.ok)
-        throw new Error(result?.message || "Failed to accept booking");
+      if (!res.ok) throw new Error(result?.message || "Failed to accept booking");
 
       let booking = result.booking as any;
-      booking = {
-        ...booking,
-        id: booking.bookingId || booking.id || booking._id,
-      };
+      booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
       console.log("[DHOME] booking raw from backend →", result.booking);
 
       const [pickupLabel, destinationLabel] = await Promise.all([
         getPlaceLabel(booking.pickupLat, booking.pickupLng),
-        getPlaceLabel(
-          booking.destinationLat,
-          booking.destinationLng
-        ),
+        getPlaceLabel(booking.destinationLat, booking.destinationLng),
       ]);
 
       let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
-          const infoRes = await fetch(
-            `${API_BASE_URL}/api/passenger/${booking.passengerId}`
-          );
+          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
             if (p) {
               passengerProfile = p;
-              const buildName = (x: any) =>
-                [x.firstName, x.middleName, x.lastName]
-                  .filter(Boolean)
-                  .join(" ");
-              booking = {
-                ...booking,
-                passengerName: buildName(p),
-              };
+              const buildName = (x: any) => [x.firstName, x.middleName, x.lastName].filter(Boolean).join(" ");
+              booking = { ...booking, passengerName: buildName(p) };
             }
           }
         } catch {}
@@ -1059,40 +933,21 @@ export default function DHome() {
       bookingIdRef.current = jobId;
       setActiveBookingId(jobId);
 
-      setActiveJobs((prev) =>
-        prev.some((j) => String(j.id) === jobId)
-          ? prev
-          : [...prev, booking]
-      );
+      setActiveJobs((prev) => (prev.some((j) => String(j.id) === jobId) ? prev : [...prev, booking]));
 
       setJobStateById((prev) => ({
         ...prev,
-        [jobId]:
-          prev[jobId] || {
-            phase: "toPickup",
-            pickedUp: false,
-            paymentConfirm: false,
-          },
+        [jobId]: prev[jobId] || { phase: "toPickup", pickedUp: false, paymentConfirm: false },
       }));
 
       const check = validateBooking(booking);
-      if (!check.valid)
-        Alert.alert(
-          "Booking data issue",
-          check.issues.join(", ")
-        );
+      if (!check.valid) Alert.alert("Booking data issue", check.issues.join(", "));
 
       mapRef.current?.postMessage(
         JSON.stringify({
           type: "setPassengerMarkers",
-          pickup: {
-            latitude: booking.pickupLat,
-            longitude: booking.pickupLng,
-          },
-          destination: {
-            latitude: booking.destinationLat,
-            longitude: booking.destinationLng,
-          },
+          pickup: { latitude: booking.pickupLat, longitude: booking.pickupLng },
+          destination: { latitude: booking.destinationLat, longitude: booking.destinationLng },
         })
       );
     } catch (error: any) {
@@ -1119,10 +974,7 @@ export default function DHome() {
         ]);
         return true;
       };
-      const subscription = BackHandler.addEventListener(
-        "hardwareBackPress",
-        onBackPress
-      );
+      const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress);
       return () => subscription.remove();
     }, [isOnline])
   );
@@ -1133,14 +985,8 @@ export default function DHome() {
     mapRef.current.postMessage(
       JSON.stringify({
         type: "setPassengerMarkers",
-        pickup: {
-          latitude: incomingBooking.pickupLat,
-          longitude: incomingBooking.pickupLng,
-        },
-        destination: {
-          latitude: incomingBooking.destinationLat,
-          longitude: incomingBooking.destinationLng,
-        },
+        pickup: { latitude: incomingBooking.pickupLat, longitude: incomingBooking.pickupLng },
+        destination: { latitude: incomingBooking.destinationLat, longitude: incomingBooking.destinationLng },
       })
     );
   }, [incomingBooking]);
@@ -1151,21 +997,10 @@ export default function DHome() {
 
     const fetchQueue = async () => {
       try {
-        if (!isOnline) {
+        if (!isOnline || isFull) {
           setQueue([]);
           setPreviewBooking(null);
-          mapRef.current?.postMessage(
-            JSON.stringify({ type: "setWaitingMarkers", items: [] })
-          );
-          return;
-        }
-
-        if (isFull) {
-          setQueue([]);
-          setPreviewBooking(null);
-          mapRef.current?.postMessage(
-            JSON.stringify({ type: "setWaitingMarkers", items: [] })
-          );
+          mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
           return;
         }
 
@@ -1178,9 +1013,7 @@ export default function DHome() {
         if (!center) return;
 
         const driverId = await AsyncStorage.getItem("driverId");
-        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${
-          center.lat
-        }&lng=${center.lng}&radiusKm=5&limit=10${
+        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${
           driverId ? `&driverId=${driverId}` : ""
         }&ai=1`;
 
@@ -1190,30 +1023,20 @@ export default function DHome() {
         try {
           data = JSON.parse(text);
         } catch {
-          console.log(
-            "❌ [DHOME] waiting-bookings non-JSON:",
-            text.slice(0, 200)
-          );
+          console.log("❌ [DHOME] waiting-bookings non-JSON:", text.slice(0, 200));
         }
 
         if (!r.ok || !Array.isArray(data)) {
           setQueue([]);
           setPreviewBooking(null);
-          mapRef.current?.postMessage(
-            JSON.stringify({ type: "setWaitingMarkers", items: [] })
-          );
+          mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
           return;
         }
 
         const list = data as any[];
         setQueue(list);
 
-        if (
-          previewBooking &&
-          !list.some(
-            (q: any) => String(q.id) === String(previewBooking.id)
-          )
-        ) {
+        if (previewBooking && !list.some((q: any) => String(q.id) === String(previewBooking.id))) {
           setPreviewBooking(null);
         }
 
@@ -1224,6 +1047,7 @@ export default function DHome() {
               id: q.id,
               lat: q.pickup.lat,
               lng: q.pickup.lng,
+              bookingType: q.bookingType || "CLASSIC",
             })),
           })
         );
@@ -1231,9 +1055,7 @@ export default function DHome() {
         console.log("❌ [DHOME] queue fetch error", e);
         setQueue([]);
         setPreviewBooking(null);
-        mapRef.current?.postMessage(
-          JSON.stringify({ type: "setWaitingMarkers", items: [] })
-        );
+        mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
       }
     };
 
@@ -1243,24 +1065,23 @@ export default function DHome() {
   }, [isOnline, driverLoc, location, capacity, activeJobs, isFull]);
 
   useEffect(() => {
-    const full = capacity !== null && activeJobs.length >= capacity;
-    if (full || incomingBooking) {
-      if (previewBooking) {
-        setPreviewBooking(null);
-      }
-    }
-  }, [capacity, activeJobs, incomingBooking]);
+    const bookingSeats = activeJobs.reduce((s, j) => s + (j.partySize || 1), 0);
+    const pwActive = (pwapp.list || []).filter(p => p.status === "ACTIVE").length;
 
-  // when going offline or full → clear PoPas markers
+    const totalUsedSeats = bookingSeats + pwActive;
+    const fullNow = capacity != null && totalUsedSeats >= capacity;
+
+    if (fullNow || incomingBooking) {
+      if (previewBooking) setPreviewBooking(null);
+    }
+  }, [capacity, activeJobs, pwapp.list, incomingBooking, previewBooking]);
+
   useEffect(() => {
     if (!isOnline || isFull) {
-      mapRef.current?.postMessage(
-        JSON.stringify({ type: "setWaitingMarkers", items: [] })
-      );
+      mapRef.current?.postMessage(JSON.stringify({ type: "setWaitingMarkers", items: [] }));
     }
   }, [isOnline, isFull]);
 
-  // helpers for UI components
   const handleToggleOnline = () => {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
@@ -1272,10 +1093,7 @@ export default function DHome() {
     setActiveBookingId(id);
     setIncomingBooking(job);
     setMinimized(false);
-    setJobStateById((prev) => ({
-      ...prev,
-      [id]: prev[id] || defaultJobState,
-    }));
+    setJobStateById((prev) => ({ ...prev, [id]: prev[id] || defaultJobState }));
   };
 
   const openChatForBooking = (booking: any | null) => {
@@ -1296,11 +1114,7 @@ export default function DHome() {
     const id = String(incomingBooking.id);
     setJobStateById((prev) => ({
       ...prev,
-      [id]: {
-        ...(prev[id] || defaultJobState),
-        pickedUp: true,
-        phase: "toDropoff",
-      },
+      [id]: { ...(prev[id] || defaultJobState), pickedUp: true, phase: "toDropoff" },
     }));
   };
 
@@ -1309,56 +1123,36 @@ export default function DHome() {
     const id = String(incomingBooking.id);
     setJobStateById((prev) => ({
       ...prev,
-      [id]: {
-        ...(prev[id] || defaultJobState),
-        pickedUp: true,
-        phase: "toDropoff",
-        paymentConfirm: true,
-      },
+      [id]: { ...(prev[id] || defaultJobState), pickedUp: true, phase: "toDropoff", paymentConfirm: true },
     }));
   };
 
   const handleConfirmPayment = async () => {
     try {
       const idToComplete =
-        bookingIdRef.current ||
-        incomingBooking?.id ||
-        incomingBooking?.bookingId ||
-        incomingBooking?._id;
+        bookingIdRef.current || incomingBooking?.id || incomingBooking?.bookingId || incomingBooking?._id;
 
       if (!idToComplete) {
         Alert.alert("❌ Error", "Missing booking id.");
         return;
       }
 
-      dbg("DHOME:confirmPayment", {
-        bookingId: idToComplete,
+      dbg("DHOME:confirmPayment", { bookingId: idToComplete });
+
+      const res = await fetch(`${API_BASE_URL}/api/complete-booking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId: idToComplete }),
       });
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/complete-booking`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bookingId: idToComplete }),
-        }
-      );
-
       if (res.ok) {
-        Alert.alert(
-          "✅ Payment Confirmed",
-          "Transaction completed!"
-        );
+        Alert.alert("✅ Payment Confirmed", "Transaction completed!");
 
         const idStr = String(idToComplete);
 
         setActiveJobs((prev) => {
-          const next = prev.filter(
-            (j) => String(j.id) !== idStr
-          );
-          setActiveBookingId((old) =>
-            old && String(old) === idStr ? null : old
-          );
+          const next = prev.filter((j) => String(j.id) !== idStr);
+          setActiveBookingId((old) => (old && String(old) === idStr ? null : old));
           return next;
         });
 
@@ -1370,23 +1164,12 @@ export default function DHome() {
 
         bookingIdRef.current = null;
 
-        mapRef.current?.postMessage(
-          JSON.stringify({ type: "clearRoute" })
-        );
-        mapRef.current?.postMessage(
-          JSON.stringify({
-            type: "setPassengerMarkers",
-            pickup: null,
-            destination: null,
-          })
-        );
+        mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+        mapRef.current?.postMessage(JSON.stringify({ type: "setPassengerMarkers", pickup: null, destination: null }));
 
         setIncomingBooking(() => null);
       } else {
-        Alert.alert(
-          "❌ Error",
-          "Failed to mark booking as complete."
-        );
+        Alert.alert("❌ Error", "Failed to mark booking as complete.");
       }
     } catch (error) {
       console.error("❌ Error confirming payment:", error);
@@ -1394,12 +1177,7 @@ export default function DHome() {
     }
   };
 
-  const showIncomingCard =
-    !!incomingBooking &&
-    !dropoff &&
-    !confirmed &&
-    !minimized &&
-    !previewBooking;
+  const showIncomingCard = !!incomingBooking && !dropoff && !confirmed && !minimized && !previewBooking;
 
   const showCapOverlay = isOnline;
   const showTodaPill = isOnline && currentToda && inTodaZone;
@@ -1412,11 +1190,7 @@ export default function DHome() {
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: 30 }}>
-        <StatusBar
-          barStyle="light-content"
-          translucent
-          backgroundColor="black"
-        />
+        <StatusBar barStyle="light-content" translucent backgroundColor="black" />
       </View>
 
       {mapHtml && (
@@ -1435,25 +1209,14 @@ export default function DHome() {
 
               if (msg?.type === "waitingMarkerTapped") {
                 if (isFull) {
-                  Alert.alert(
-                    "Capacity full",
-                    "You’ve reached your passenger limit."
-                  );
+                  Alert.alert("Capacity full", "You’ve reached your passenger limit.");
                   return;
                 }
-                const q = queue.find(
-                  (x) => String(x.id) === String(msg.bookingId)
-                );
+                const q = queue.find((x) => String(x.id) === String(msg.bookingId));
                 if (q) {
                   (async () => {
-                    const pickupLabel = await getPlaceLabel(
-                      q.pickup.lat,
-                      q.pickup.lng
-                    );
-                    const destinationLabel = await getPlaceLabel(
-                      q.destination.lat,
-                      q.destination.lng
-                    );
+                    const pickupLabel = await getPlaceLabel(q.pickup.lat, q.pickup.lng);
+                    const destinationLabel = await getPlaceLabel(q.destination.lat, q.destination.lng);
 
                     setPreviewBooking({
                       id: q.id,
@@ -1466,16 +1229,12 @@ export default function DHome() {
                       fare: q.fare,
 
                       bookedFor: !!q.passengerPreview?.bookedFor,
-                      riderName: q.passengerPreview?.bookedFor
-                        ? q.passengerPreview?.name || "Rider"
-                        : "",
+                      riderName: q.passengerPreview?.bookedFor ? q.passengerPreview?.name || "Rider" : "",
                       riderPhone: "",
 
-                      passengerName:
-                        q.passengerPreview?.name || "Passenger",
+                      passengerName: q.passengerPreview?.name || "Passenger",
                       displayName:
-                        q.passengerPreview?.bookedFor &&
-                        q.passengerPreview?.name
+                        q.passengerPreview?.bookedFor && q.passengerPreview?.name
                           ? q.passengerPreview.name
                           : q.passengerPreview?.name || "Passenger",
 
@@ -1495,37 +1254,63 @@ export default function DHome() {
 
       {showCapOverlay && (
         <View pointerEvents="box-none" style={styles.capOverlay}>
-          <View
-            style={[
-              styles.capPill,
-              isFull && styles.capPillFull,
-            ]}
-          >
+          <View style={[styles.capPill, isFull && styles.capPillFull]}>
             <Text style={styles.capText}>
-              {totalSeats != null
-                ? `${usedSeats}/${totalSeats} cap`
-                : `${usedSeats} cap`}
+              {totalSeats != null ? `${usedSeats}/${totalSeats} cap` : `${usedSeats} cap`}
             </Text>
           </View>
         </View>
       )}
 
       {showTodaPill && (
-        <View
-          pointerEvents="box-none"
-          style={[styles.capOverlay, { top: 80 }]}
-        >
-          <View
-            style={[
-              styles.capPill,
-              { backgroundColor: "#1e88e5" },
-            ]}
-          >
-            <Text style={styles.capText}>
-              Inside TODA:{" "}
-              {currentToda?.name || "Unknown TODA"}
-            </Text>
+        <View pointerEvents="box-none" style={[styles.capOverlay, { top: 80 }]}>
+          <View style={[styles.capPill, { backgroundColor: "#1e88e5" }]}>
+            <Text style={styles.capText}>Inside TODA: {currentToda?.name || "Unknown TODA"}</Text>
           </View>
+        </View>
+      )}
+
+      {/* ✅ NEW: Task + pwApp overlay stack (above bottom bar) */}
+      {isOnline && (
+        <View pointerEvents="box-none" style={styles.taskPwOverlay}>
+          {taskPwMinimized ? (
+            <View style={styles.taskPwMiniRow} pointerEvents="auto">
+              <TouchableOpacity
+                style={styles.taskPwMiniBtn}
+                onPress={() => setTaskPwMinimized(false)}
+              >
+                <Text style={styles.taskPwMiniText}>▲ Show Tasks & pwApp</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View pointerEvents="auto" style={styles.taskPwCardWrap}>
+              {/* header row with minimize */}
+              <View style={styles.taskPwHeaderRow}>
+                <Text style={styles.taskPwHeaderTitle}>Passenger Panel</Text>
+
+                <TouchableOpacity
+                  style={styles.taskPwMinBtn}
+                  onPress={() => setTaskPwMinimized(true)}
+                >
+                  <Text style={styles.taskPwMinBtnText}>Minimize</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TaskProgressBar
+                active={tasks.active}
+                pending={tasks.pending}
+                onComplete={async (taskId) => {
+                  await tasks.completeTask(taskId);
+                }}
+              />
+
+              <PwAppPanel
+                list={pwapp.list}
+                onAdd={pwapp.addPassenger}
+                onDropoff={pwapp.dropoff}
+              />
+            </View>
+          )}
         </View>
       )}
 
@@ -1536,11 +1321,7 @@ export default function DHome() {
         onSelectJob={handleSelectActiveJob}
       />
 
-      <PreviewBookingCard
-        previewBooking={previewBooking}
-        onAccept={acceptPreview}
-        onClose={() => setPreviewBooking(null)}
-      />
+      <PreviewBookingCard previewBooking={previewBooking} onAccept={acceptPreview} onClose={() => setPreviewBooking(null)} />
 
       {showIncomingCard && (
         <IncomingBookingCard
@@ -1554,10 +1335,7 @@ export default function DHome() {
       )}
 
       {minimized && (
-        <TouchableOpacity
-          style={styles.minimizedButton}
-          onPress={() => setMinimized(false)}
-        >
+        <TouchableOpacity style={styles.minimizedButton} onPress={() => setMinimized(false)}>
           <Text>🔍 View Booking Info</Text>
         </TouchableOpacity>
       )}
@@ -1587,6 +1365,7 @@ export default function DHome() {
         hasIncoming={!!incomingBooking}
         capacity={capacity}
         activeJobsCount={activeJobs.length}
+        usedSeats={usedSeatsUi}
         onToggleOnline={handleToggleOnline}
       />
     </View>
@@ -1601,24 +1380,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: -30,
-  },
-  popup: {
-    position: "absolute",
-    bottom: 10,
-    left: 20,
-    right: 20,
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    elevation: 5,
-    zIndex: 99,
-  },
-  popupTitle: { fontWeight: "bold", fontSize: 16, marginBottom: 5 },
-  acceptButton: {
-    backgroundColor: "#4caf50",
-    padding: 10,
-    borderRadius: 5,
-    marginTop: 10,
   },
   capOverlay: {
     position: "absolute",
@@ -1643,5 +1404,67 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "black",
+  },
+
+  // ✅ NEW: overlay container for Tasks + pwApp
+  taskPwOverlay: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 88, // above DriverStatusBar
+    zIndex: 120,
+    gap: 8,
+  },
+
+  taskPwCardWrap: {
+    gap: 8,
+  },
+
+  taskPwHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+
+  taskPwHeaderTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  taskPwMinBtn: {
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+
+  taskPwMinBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  taskPwMiniRow: {
+    alignItems: "center",
+  },
+
+  taskPwMiniBtn: {
+    backgroundColor: "rgba(17,24,39,0.92)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+
+  taskPwMiniText: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 12,
   },
 });
