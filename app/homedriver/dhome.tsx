@@ -1270,7 +1270,6 @@ export default function DHomeTaskPwApp() {
         </View>
       )}
 
-      {/* ✅ NEW: Task + pwApp overlay stack (above bottom bar) */}
       {isOnline && (
         <View pointerEvents="box-none" style={styles.taskPwOverlay}>
           {taskPwMinimized ? (
@@ -1279,7 +1278,7 @@ export default function DHomeTaskPwApp() {
                 style={styles.taskPwMiniBtn}
                 onPress={() => setTaskPwMinimized(false)}
               >
-                <Text style={styles.taskPwMiniText}>▲ Show Tasks & pwApp</Text>
+                <Text style={styles.taskPwMiniText}>▲ Add Passenger</Text>
               </TouchableOpacity>
             </View>
           ) : (
