@@ -15,6 +15,11 @@ export default function AcceptedPassengersList({
   capacity,
   onSelectJob,
 }: Props) {
+  // ✅ Always hide this table (we no longer want it in the new task-based system)
+  return null;
+
+  // --- old UI kept below for reference (never reached) ---
+  /*
   if (!isOnline || activeJobs.length === 0) return null;
 
   return (
@@ -52,12 +57,13 @@ export default function AcceptedPassengersList({
       ))}
     </View>
   );
+  */
 }
 
 const styles = StyleSheet.create({
   Name: {
     fontWeight: "bold",
-    fontSize: 15
+    fontSize: 15,
   },
   popup: {
     position: "absolute",

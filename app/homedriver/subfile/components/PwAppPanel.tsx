@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Alert } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { PwAppPassenger } from "../hooks/usePwApp";
 
 const TYPES: PwAppPassenger["passengerType"][] = ["REGULAR", "STUDENT", "PWD", "SENIOR"];
@@ -8,10 +9,14 @@ export default function PwAppPanel({
   list,
   onAdd,
   onDropoff,
+  onQuote,
+  onCancel,
 }: {
   list: PwAppPassenger[];
   onAdd: (type: PwAppPassenger["passengerType"], note: string) => Promise<{ ok: boolean; data?: any }>;
   onDropoff: (id: string) => Promise<{ ok: boolean; data?: any }>;
+  onQuote: (id: string) => Promise<{ ok: boolean; data?: any }>;
+  onCancel: (id: string) => Promise<{ ok: boolean; data?: any }>;
 }) {
   const [note, setNote] = useState("");
   const [type, setType] = useState<PwAppPassenger["passengerType"]>("REGULAR");
@@ -76,69 +81,101 @@ export default function PwAppPanel({
       ) : (
         <View style={{ marginTop: 8 }}>
           {list.map((p) => (
-            <TouchableOpacity
-              key={p._id}
-              style={styles.item}
-              onPress={() => {
-                Alert.alert(
-                  "Dropoff passenger?",
-                  `${p.passengerType}${p.note ? ` • ${p.note}` : ""}`,
-                  [
+            <View key={p._id} style={styles.itemRow}>
+              
+              {/* MAIN DROP-OFF AREA */}
+              <TouchableOpacity
+                style={styles.itemMain}
+                onPress={async () => {
+                  const q = await onQuote(p._id);
+
+                  if (!q.ok) {
+                    const msg = q?.data?.error || q?.data?.message || "Unable to compute fare right now.";
+                    Alert.alert("pwApp", msg);
+                    return;
+                  }
+
+                  const quote = q?.data?.quote;
+                  const fb = quote?.fareBreakdown;
+
+                  let details = `${p.passengerType}${p.note ? ` • ${p.note}` : ""}`;
+
+                  if (fb) {
+                    const discPct = Math.round((fb.discountRate || 0) * 100);
+                    details +=
+                      "\n\n" +
+                      [
+                        `Distance: ${fb.distanceKm} km`,
+                        ``,
+                        `Base fare (first ${fb.baseKm} km): ₱${fb.baseFare}`,
+                        `Extra: ${fb.extraKmCharged} km × ₱${fb.perKm} = ₱${fb.extraFare}`,
+                        `Subtotal: ₱${Math.round(fb.subtotal)}`,
+                        discPct > 0 ? `Discount (${discPct}%): -₱${fb.discountAmount}` : `Discount: ₱0`,
+                        ``,
+                        `TOTAL: ₱${fb.total}`,
+                      ].join("\n");
+                  } else {
+                    const fare = quote?.computedFare;
+                    const distM = quote?.distanceMeters;
+                    details += `\n\nTotal: ₱${fare ?? "?"}\nDistance: ${distM ? (distM / 1000).toFixed(2) : "?"} km`;
+                  }
+
+                  Alert.alert("Dropoff Passenger", details, [
                     { text: "Cancel", style: "cancel" },
                     {
                       text: "Dropoff",
                       style: "destructive",
                       onPress: async () => {
                         const res = await onDropoff(p._id);
-
                         if (!res.ok) {
                           const msg = res?.data?.error || res?.data?.message || "Dropoff failed.";
                           Alert.alert("pwApp", msg);
-                          return;
-                        }
-
-                        const passenger = res?.data?.passenger;
-                        const fb = passenger?.fareBreakdown;
-
-                        if (fb) {
-                          const discPct = Math.round((fb.discountRate || 0) * 100);
-                          Alert.alert(
-                            "Fare computed",
-                            [
-                              `Distance: ${fb.distanceKm} km`,
-                              ``,
-                              `Base fare (first ${fb.baseKm} km): ₱${fb.baseFare}`,
-                              `Extra: ${fb.extraKmCharged} km × ₱${fb.perKm} = ₱${fb.extraFare}`,
-                              `Subtotal: ₱${Math.round(fb.subtotal)}`,
-                              discPct > 0 ? `Discount (${discPct}%): -₱${fb.discountAmount}` : `Discount: ₱0`,
-                              ``,
-                              `TOTAL: ₱${fb.total}`,
-                            ].join("\n")
-                          );
-                        } else {
-                          const fare = passenger?.computedFare;
-                          const distM = passenger?.distanceMeters;
-                          Alert.alert(
-                            "Fare computed",
-                            `Total: ₱${fare ?? "?"}\nDistance: ${distM ? (distM / 1000).toFixed(2) : "?"} km`
-                          );
                         }
                       },
                     },
-                  ]
-                );
-              }}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle} numberOfLines={1}>
-                  {p.passengerType} {p.note ? `• ${p.note}` : ""}
-                </Text>
-                <Text style={styles.itemSub} numberOfLines={1}>
-                  Pin: {p.pickupLat.toFixed(4)}, {p.pickupLng.toFixed(4)}
-                </Text>
-              </View>
-              <Text style={styles.dropText}>Dropoff</Text>
-            </TouchableOpacity>
+                  ]);
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.itemTitle} numberOfLines={1}>
+                    {p.passengerType} {p.note ? `• ${p.note}` : ""}
+                  </Text>
+                  <Text style={styles.itemSub} numberOfLines={1}>
+                    Pin: {p.pickupLat.toFixed(4)}, {p.pickupLng.toFixed(4)}
+                  </Text>
+                </View>
+
+                <Text style={styles.dropText}>Dropoff</Text>
+              </TouchableOpacity>
+
+              {/* REMOVE (TRASH ICON) */}
+              <TouchableOpacity
+                style={styles.trashBtn}
+                onPress={() => {
+                  Alert.alert(
+                    "Remove passenger?",
+                    "This is for mistakes only. No fare will be computed.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Remove",
+                        style: "destructive",
+                        onPress: async () => {
+                          const res = await onCancel(p._id);
+                          if (!res.ok) {
+                            const msg = res?.data?.error || res?.data?.message || "Remove failed.";
+                            Alert.alert("pwApp", msg);
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="trash-outline" size={18} color="#ef4444" />
+              </TouchableOpacity>
+
+            </View>
           ))}
         </View>
       )}
@@ -147,7 +184,7 @@ export default function PwAppPanel({
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 12, elevation: 2 },
+  card: { backgroundColor: "#fff", borderRadius: 14, padding: 12, elevation: 2, bottom: -80},
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { fontSize: 16, fontWeight: "800" },
   count: { fontSize: 12, color: "#6b7280" },
@@ -180,4 +217,23 @@ const styles = StyleSheet.create({
   itemTitle: { fontWeight: "900" },
   itemSub: { fontSize: 11, color: "#6b7280", marginTop: 2 },
   dropText: { fontWeight: "900", color: "#ef4444" },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#f3f4f6",
+    paddingVertical: 8,
+  },
+
+  itemMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  trashBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
 });

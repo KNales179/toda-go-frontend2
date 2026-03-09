@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { API_BASE_URL } from "@/config"; // change if your alias differs
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE_URL } from "@/config";
 
 export type Task = {
   _id: string;
@@ -15,6 +15,8 @@ export type Task = {
   createdAt?: string;
 };
 
+type LatLng = { lat: number; lng: number };
+
 export function useDriverTasks(driverId: string, enabled: boolean) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const timer = useRef<any>(null);
@@ -26,19 +28,42 @@ export function useDriverTasks(driverId: string, enabled: boolean) {
       const json = await res.json();
       setTasks(Array.isArray(json?.tasks) ? json.tasks : []);
     } catch {
-      // silent (you will debug easily from frontend)
+      // silent
     }
   }, [driverId]);
 
-  const completeTask = useCallback(
-    async (taskId: string) => {
+  const replan = useCallback(
+    async (pos: LatLng) => {
+      if (!driverId) return false;
       try {
-        await fetch(`${API_BASE_URL}/api/tasks/${taskId}/complete`, {
+        const res = await fetch(`${API_BASE_URL}/api/tasks/replan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ driverId, lat: pos.lat, lng: pos.lng }),
         });
-        await fetchTasks();
+        const json = await res.json().catch(() => null);
+        // backend returns tasks as well
+        if (json?.tasks && Array.isArray(json.tasks)) setTasks(json.tasks);
+        else await fetchTasks();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [driverId, fetchTasks]
+  );
+
+  const completeTask = useCallback(
+    async (taskId: string, pos: LatLng) => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/tasks/${taskId}/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ driverLat: pos.lat, driverLng: pos.lng }),
+        });
+        const json = await res.json().catch(() => null);
+        if (json?.tasks && Array.isArray(json.tasks)) setTasks(json.tasks);
+        else await fetchTasks();
         return true;
       } catch {
         return false;
@@ -58,9 +83,9 @@ export function useDriverTasks(driverId: string, enabled: boolean) {
     };
   }, [enabled, driverId, fetchTasks]);
 
-  const active = tasks.filter((t) => t.status === "ACTIVE");
-  const pending = tasks.filter((t) => t.status === "PENDING");
-  const completed = tasks.filter((t) => t.status === "COMPLETED");
+  const active = useMemo(() => tasks.filter((t) => t.status === "ACTIVE"), [tasks]);
+  const pending = useMemo(() => tasks.filter((t) => t.status === "PENDING"), [tasks]);
+  const completed = useMemo(() => tasks.filter((t) => t.status === "COMPLETED"), [tasks]);
 
-  return { tasks, active, pending, completed, refresh: fetchTasks, completeTask };
+  return { tasks, active, pending, completed, refresh: fetchTasks, replan, completeTask };
 }

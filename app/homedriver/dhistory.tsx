@@ -73,7 +73,6 @@ export default function DHistory() {
     (async () => {
       const id = (await AsyncStorage.getItem("driverId")) || (await AsyncStorage.getItem("userId"));
       setDriverId(id || null);
-      console.log("[DHistory] loaded driverId:", id);
 
       if (!id) return;
 
@@ -104,7 +103,6 @@ export default function DHistory() {
 
           if (name) {
             setDriverName(String(name));
-            console.log("[DHistory] loaded driverName:", name);
             break;
           }
         } catch (e) {

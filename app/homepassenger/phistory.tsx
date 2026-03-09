@@ -266,7 +266,6 @@ export default function PHistory() {
     if (!passengerId) {
       setLoading(false);
       setRefreshing(false);
-      console.log("[PHistory][fetchAll] no passengerId, abort");
       return;
     }
     try {
@@ -283,7 +282,6 @@ export default function PHistory() {
         const url = `${base}${paths[i]}`;
         const filterLocally = i >= 2;
         try {
-          console.log("[PHistory][fetchAll] trying", url);
           const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
           const text = await res.text();
           let data: any;
@@ -298,22 +296,7 @@ export default function PHistory() {
           if (filterLocally) {
             raw = raw.filter((x: any) => String(x.passengerId) === String(passengerId));
           }
-
-          // 🔍 LOG raw from backend (first 3 only)
-          console.log(
-            "[PHistory][fetchAll] RAW history sample from",
-            url,
-            JSON.stringify(raw.slice(0, 3), null, 2)
-          );
-
           got = normalize(raw);
-
-          // 🔍 LOG normalized items (first 3 only)
-          console.log(
-            "[PHistory][fetchAll] NORMALIZED sample",
-            JSON.stringify(got.slice(0, 3), null, 2)
-          );
-
           break;
         } catch (e) {
           console.warn("[PHistory][fetchAll] fetch attempt failed for", paths[i], e);
@@ -404,13 +387,6 @@ export default function PHistory() {
   };
 
   const openReport = (item: RideItem) => {
-    console.log("[PHistory][openReport] item selected:", {
-      _id: item._id,
-      bookingId: item.bookingId,
-      driverId: (item as any).driverId,
-      driverName: item.driverName,
-    });
-
     setReportType("");
     setOtherReport("");
     setShowDropdown(false);
@@ -435,8 +411,6 @@ export default function PHistory() {
       reportType,
       otherReport,
     };
-
-    console.log("[PHistory][submitReport] payload:", payload);
 
     try {
       setSendingReport(true);
@@ -680,7 +654,7 @@ function typeChipStyle(t?: string) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
-  topBar: { paddingTop: 40, paddingHorizontal: 20, paddingBottom: 12 },
+  topBar: { paddingTop: 50, paddingHorizontal: 20, paddingBottom: 12 },
   heading: { fontWeight: "bold", fontSize: 22 },
   typeChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
   typeChipText: { fontSize: 11, fontWeight: "700" },

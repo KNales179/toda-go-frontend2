@@ -56,10 +56,14 @@ export function buildPassengerMapHtml({
         }).setView([${initLat}, ${initLng}], 15);
 
 
-        L.tileLayer('https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=7yQg8w68otDEssrPk9wU', {
-          maxZoom: 19,
-          attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | © <a href="https://www.maptiler.com/">MapTiler</a>'
-        }).addTo(map);
+        L.tileLayer(
+          'https://api.maptiler.com/maps/openstreetmap/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}',
+          {
+            maxZoom: 19,
+            attribution:
+              '&copy; <a href="https://www.maptiler.com/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          }
+        ).addTo(map);
 
         // --- State ---
         let userMarker = null;       // blue marker for passenger
@@ -364,17 +368,11 @@ export function buildPassengerMapHtml({
           iconAnchor: [15, 30],
         });
 
-        const carIcon = L.icon({
-          iconUrl: 'https://cdn-icons-png.flaticon.com/512/2972/2972185.png',
-          iconSize: [40, 40],
-          iconAnchor: [20, 40],
-        });
-
         function setDestination(lat, lng){
           if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
           destMarker = L.marker([lat,lng], { icon: destIcon })
             .addTo(map)
-            .bindTooltip("Destination", { permanent:true, direction:"top" });
+            .bindTooltip({ permanent:true, direction:"top" });
         }
 
         function setPickup(lat, lng){
@@ -388,9 +386,9 @@ export function buildPassengerMapHtml({
         function setDriver(lat, lng){
           if (driverMarker) { map.removeLayer(driverMarker); driverMarker = null; }
           if (Number.isFinite(lat) && Number.isFinite(lng)){
-            driverMarker = L.marker([lat,lng], { icon: carIcon })
+            driverMarker = L.marker([lat,lng])
               .addTo(map)
-              .bindTooltip("🚕 Driver", { permanent:true, direction:"top" })
+              .bindTooltip( { permanent:true, direction:"top" })
               .setZIndexOffset(1100);
           }
         }

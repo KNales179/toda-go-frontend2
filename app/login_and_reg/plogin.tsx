@@ -64,7 +64,6 @@ export default function PLogin() {
       try {
         data = text ? JSON.parse(text) : null;
       } catch {
-        console.log("[plogin] non-JSON body (first 200):", text.slice(0, 200));
       }
 
       if (!response.ok) {
@@ -82,19 +81,12 @@ export default function PLogin() {
       const token =
         data?.token || data?.accessToken || data?.jwt || data?.authToken;
 
-      console.log("✅ [PLOGIN] passengerId:", passengerId);
-      console.log("✅ [PLOGIN] token exists?:", !!token);
-      console.log("✅ [PLOGIN] keys:", Object.keys(data || {}));
-
       // ✅ store ids
       await AsyncStorage.setItem("passengerId", String(passengerId));
-
-      // ✅ store token (important for protected routes like notifications)
       if (token) {
         await AsyncStorage.setItem("token", String(token));
       } else {
-        // Not fatal for login, but will break protected endpoints
-        console.log("⚠️ [PLOGIN] No token returned from backend!");
+
       }
 
       const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
@@ -134,7 +126,6 @@ export default function PLogin() {
 
     } catch (error: any) {
       if (error?.name === "AbortError") {
-        console.log("[login] fetch aborted (backend slow or cold start?)");
       }
       console.error("Login error (passenger):", error, error?.stack);
       Alert.alert("Login Failed", error?.message || "Network/server error");

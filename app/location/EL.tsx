@@ -1,242 +1,88 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  Image,
-  useColorScheme,
-  ImageBackground,
-  StyleSheet,
-  Dimensions,
-  TouchableOpacity,
-  Alert,
-  ActivityIndicator,
-  AppState,
-  Platform,
-  Linking,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, Image, useColorScheme, ImageBackground, StyleSheet, Dimensions, TouchableOpacity, Alert, StatusBar} from "react-native";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 
-// OPTIONAL (better GPS settings on Android):
-// npm i expo-intent-launcher
-import * as IntentLauncher from "expo-intent-launcher";
 
 const { width, height } = Dimensions.get("window");
 
 export default function EL() {
-  const router = useRouter();
+    const router = useRouter();
+    const [isLocationEnabled, setIsLocationEnabled] = useState(false);
 
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === "dark";
-
-  const [loading, setLoading] = useState(false);
-  const [waitingForGps, setWaitingForGps] = useState(false);
-
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const goNext = () => {
-    // small delay to feel smoother
-    setTimeout(() => router.push("/location/welcome"), 300);
-  };
-
-  const clearPoll = () => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  };
-
-  const openLocationSettings = async () => {
-    try {
-      if (Platform.OS === "android") {
-        // Opens device Location toggle screen (best for Android)
-        await IntentLauncher.startActivityAsync(
-          IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS
-        );
-      } else {
-        // iOS can only open app settings
-        await Linking.openSettings();
-      }
-    } catch (e) {
-      // fallback
-      await Linking.openSettings();
-    }
-  };
-
-  const ensurePermission = async () => {
-    const current = await Location.getForegroundPermissionsAsync();
-    if (current.status === "granted") return true;
-
-    const req = await Location.requestForegroundPermissionsAsync();
-    return req.status === "granted";
-  };
-
-  const isGpsEnabled = async () => {
-    return await Location.hasServicesEnabledAsync();
-  };
-
-  const pollUntilGpsOnThenProceed = async () => {
-    clearPoll();
-    setWaitingForGps(true);
-
-    // Poll every 700ms; when GPS becomes enabled, proceed
-    pollTimerRef.current = setInterval(async () => {
-      try {
-        const enabled = await isGpsEnabled();
-        if (enabled) {
-          clearPoll();
-          setWaitingForGps(false);
-
-          // (Optional) fetch location once GPS is ON:
-          try {
-            await Location.getCurrentPositionAsync({});
-          } catch {}
-
-          setLoading(false);
-          goNext();
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 700);
-  };
-
-  const handleUseMyLocation = async () => {
-    if (loading) return;
-
-    setLoading(true);
-
-    try {
-      // 1) Ensure permission
-      const permitted = await ensurePermission();
-      if (!permitted) {
-        setLoading(false);
-        Alert.alert(
-          "Location Access Denied",
-          "Please allow location permission to continue.",
-          [{ text: "OK" }]
-        );
-        return;
-      }
-
-      // 2) Check GPS toggle / services enabled
-      const enabled = await isGpsEnabled();
-      if (!enabled) {
-        setLoading(false);
-
-        Alert.alert(
-          "Turn on Location",
-          "Your GPS/Location Services is off. Turn it on, then we’ll continue automatically.",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: Platform.OS === "android" ? "Open Location Settings" : "Open Settings",
-              onPress: openLocationSettings,
-            },
-          ]
-        );
-
-        // Start polling so it proceeds once they turn it ON (no need to press again)
-        await pollUntilGpsOnThenProceed();
-        return;
-      }
-
-      // 3) GPS already ON → proceed
-      try {
-        await Location.getCurrentPositionAsync({});
-      } catch {}
-
-      setLoading(false);
-      goNext();
-    } catch (e) {
-      setLoading(false);
-      Alert.alert("Error", "Something went wrong while checking location.");
-    }
-  };
-
-  // Auto-check when app returns to foreground (after user toggles GPS/settings)
-  useEffect(() => {
-    const sub = AppState.addEventListener("change", async (state) => {
-      if (state === "active" && waitingForGps) {
-        // trigger immediate check; polling is already running, but this makes it feel faster
-        const enabled = await isGpsEnabled();
-        if (enabled) {
-          clearPoll();
-          setWaitingForGps(false);
-          setLoading(false);
-          goNext();
-        }
-      }
-    });
-
-    return () => {
-      sub.remove();
-      clearPoll();
-    };
-  }, [waitingForGps]);
-
-  // Optional: if already granted + GPS on, auto-redirect on mount
-  useEffect(() => {
-    (async () => {
+    // Function to check if location is already enabled
+    const checkLocationPermission = async () => {
       const { status } = await Location.getForegroundPermissionsAsync();
-      const enabled = await Location.hasServicesEnabledAsync();
-      if (status === "granted" && enabled) {
-        Alert.alert("Location Already Enabled", "Redirecting...");
-        setTimeout(() => router.push("/location/welcome"), 800);
+      const isEnabled = await Location.hasServicesEnabledAsync(); // Checks if GPS is enabled
+  
+      if (status === "granted" && isEnabled) {
+        setIsLocationEnabled(true);
+        
+        // Show alert and redirect after 2 seconds
+        Alert.alert("Location Already Enabled", "You will be redirected shortly...");
+        setTimeout(() => {router.push("/location/welcome");}, 1000);
       }
-    })();
-  }, []);
+    };
+    
 
-  return (
-    <View style={styles.container}>
-      <ImageBackground source={require("../../assets/images/loc2.png")} style={styles.background}>
-        <View style={styles.overlay} />
+    // Function to request location permissions
+    const requestLocationPermission = async () => {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+            Alert.alert(
+                "Location Access Denied",
+                "Please enable location services in your settings.",
+                [{ text: "OK" }]
+            );
+            return;
+        }
 
-        <View style={[styles.content, { backgroundColor: isDarkMode ? "#313639" : "#f2f2f2" }]}>
-          <View>
-            <Image style={styles.loc} source={require("../../assets/images/loc.png")} />
-          </View>
+        // Get user's location
+        const location = await Location.getCurrentPositionAsync({});
+        console.log("User's location:", location);
+        setTimeout(() => {
+            router.push("/location/welcome");
+        }, 1000);
+    };
 
-          <Text style={[styles.title, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>
-            Enable your location
-          </Text>
+    // Check location status on mount
+    useEffect(() => {
+        checkLocationPermission();
+    }, []);
+    const colorScheme = useColorScheme();
+    const isDarkMode = colorScheme === 'dark';
 
-          <Text style={styles.subtitle}>
-            Choose your location to start finding requests around you.
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.button, (loading || waitingForGps) && { opacity: 0.8 }]}
-            onPress={handleUseMyLocation}
-            activeOpacity={0.8}
-            disabled={loading} // keep enabled if waitingForGps? you can allow press again; but not needed now
-          >
-            <View style={styles.btnInner}>
-              {(loading || waitingForGps) && (
-                <ActivityIndicator size="small" color="#fff" style={{ marginRight: 10 }} />
-              )}
-              <Text style={styles.btntext}>
-                {waitingForGps ? "Waiting for GPS..." : loading ? "Checking..." : "Use my location"}
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Optional helper text */}
-          {waitingForGps && (
-            <Text style={[styles.hint, { color: isDarkMode ? "#d7d7d7" : "#666" }]}>
-              Turn on Location Services, we’ll continue automatically.
-            </Text>
-          )}
+    return (
+        <View style={styles.container}>
+            <ImageBackground source={require("../../assets/images/loc2.png")} style={styles.background}>
+                {/* Dark overlay */}
+                <View style={styles.overlay} />
+                {/* Centered Container */}
+                <View style={[styles.content, { backgroundColor: isDarkMode ? "#313639" : "#f2f2f2" }]}>
+                    <View>
+                        <Image style={styles.loc} source={require("../../assets/images/loc.png")} />
+                    </View>
+                    <Text style={[styles.title, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>Enable your location</Text>
+                    <Text style={styles.subtitle}>
+                        Choose your location to start finding requests around you.
+                    </Text>
+                    <TouchableOpacity style={styles.button} onPress={requestLocationPermission}>
+                        <Text style={styles.btntext}>Use my location</Text>
+                    </TouchableOpacity>
+                    {/* <TouchableOpacity style={{ marginBottom: 40 }}>
+                        <Text style={styles.btntext2} onPress={() => router.push("/location/manual")}>Skip for now</Text>
+                    </TouchableOpacity> */}
+                </View>
+            </ImageBackground>
         </View>
-      </ImageBackground>
-    </View>
-  );
+    );
 }
 
 const styles = StyleSheet.create({
   container: {
     height: height,
     flex: 1,
+    marginTop: 40,
   },
   background: {
     width: width,
@@ -254,10 +100,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 10,
     zIndex: 1,
-    paddingBottom: 24,
   },
   loc: {
-    backgroundColor: "#f2f2f2",
+    backgroundColor: '#f2f2f2',
     margin: 50,
     height: 180,
     width: 180,
@@ -281,28 +126,25 @@ const styles = StyleSheet.create({
   },
   button: {
     width: "90%",
-    marginTop: 24,
-    backgroundColor: "#5089A3",
-    borderRadius: 10,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-  },
-  btnInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    margin: 30,
   },
   btntext: {
+    textAlign: "center",
     color: "#FFFFFF",
+    backgroundColor: "#5089A3",
+    borderRadius: 10,
     fontSize: 20,
+    padding: 20,
     fontWeight: "600",
     fontFamily: "Poppins-SemiBold",
   },
-  hint: {
-    marginTop: 10,
-    fontSize: 13,
+  btntext2: {
     textAlign: "center",
-    paddingHorizontal: 20,
-    fontFamily: "Poppins-Regular",
+    color: "#B8B8B8",
+    borderRadius: 10,
+    fontSize: 20,
+    padding: 20,
+    fontWeight: "600",
+    fontFamily: "Poppins-SemiBold",
   },
 });

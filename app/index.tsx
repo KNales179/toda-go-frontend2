@@ -86,10 +86,10 @@ export default function Index() {
 
       {/* your existing UI below */}
       <View style={[styles.mainUI, { backgroundColor: isDarkMode ? "#313639" : "#f2f2f2" }]}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-          <TouchableOpacity onPress={() => router.push("/login_and_reg/alogin")}>
+        <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+          {/* <TouchableOpacity onPress={() => router.push("/login_and_reg/alogin")}>
             <Text style={[styles.admin, { color: isDarkMode ? "#313639" : "#f2f2f2" }]}>admin</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           <TouchableOpacity onPress={handleLocationFlow}>
             <Text style={[styles.skip, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>Skip</Text>
           </TouchableOpacity>

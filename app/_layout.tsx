@@ -2,9 +2,10 @@
 import { Stack } from "expo-router";
 import { LocationProvider } from "./location/GlobalLocation";
 import { useEffect, useRef } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform, StatusBar, useColorScheme } from "react-native";
 import { AuthProvider } from "./utils/authContext";
 import { politeWake } from "./utils/wakeup";
+import * as NavigationBar from "expo-navigation-bar";
 
 // 🔹 Helper to send logs to your backend in the format your route expects:
 //   { source, message, extra }
@@ -19,9 +20,7 @@ async function debugLog(message: string, extra?: any) {
         extra,
       }),
     });
-  } catch {
-    // never crash the app because of logging
-  }
+  } catch {}
 }
 
 function useForegroundWake() {
@@ -33,16 +32,12 @@ function useForegroundWake() {
     const fire = (reason: "mount" | "foreground") => {
       (async () => {
         if (!mounted) return;
-
-
         try {
           await politeWake();
-        } catch (err: any) {
-        }
+        } catch {}
       })();
     };
 
-    // initial attempt on mount
     fire("mount");
 
     const sub = AppState.addEventListener("change", (nextState) => {
@@ -50,7 +45,6 @@ function useForegroundWake() {
       stateRef.current = nextState;
 
       if (prev?.match(/inactive|background/) && nextState === "active") {
-        // app came back to foreground
         fire("foreground");
       }
     });
@@ -64,6 +58,35 @@ function useForegroundWake() {
 
 export default function RootLayout() {
   useForegroundWake();
+
+  const scheme = useColorScheme();
+  const isDark = scheme === "dark";
+
+  useEffect(() => {
+    const barBg = isDark ? "#0F1417" : "#FFFFFF";
+
+    // ✅ Top status bar icons/text
+    StatusBar.setBarStyle(isDark ? "light-content" : "dark-content");
+
+    // ✅ Android status bar background (prevents random transparency)
+    if (Platform.OS === "android") {
+      StatusBar.setBackgroundColor(barBg, true);
+      StatusBar.setTranslucent(false);
+    }
+
+    // ✅ Android bottom navigation bar (back/home/recents)
+    if (Platform.OS === "android") {
+      (async () => {
+        try {
+          await NavigationBar.setBackgroundColorAsync(barBg);
+          await NavigationBar.setButtonStyleAsync(isDark ? "light" : "dark");
+          await NavigationBar.setBorderColorAsync(barBg);
+        } catch (e) {
+          debugLog("Failed to set nav bar", String(e));
+        }
+      })();
+    }
+  }, [isDark]);
 
   return (
     <LocationProvider>

@@ -23,7 +23,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import type { AppStateStatus } from "react-native";
 import ChatNotice from "../../components/ChatNotice";
-// ❌ removed getAuth usage; using AsyncStorage only
 import * as Clipboard from "expo-clipboard";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Location from "expo-location";
@@ -36,8 +35,8 @@ import PreviewBookingCard from "./subfile/components/PreviewBookingCard";
 import IncomingBookingCard from "./subfile/components/IncomingBookingCard";
 import WorkflowCard from "./subfile/components/WorkflowCard";
 import PaymentCard from "./subfile/components/PaymentCard";
+import { Ionicons } from "@expo/vector-icons";
 
-// ✅ NEW: task + pwApp UI + hooks
 import TaskProgressBar from "./subfile/components/TaskProgressBar";
 import PwAppPanel from "./subfile/components/PwAppPanel";
 import { useDriverTasks } from "./subfile/hooks/useDriverTasks";
@@ -177,8 +176,6 @@ async function registerDriverPushToken(driverId: string) {
       return;
     }
 
-    console.log("📲 Driver push token:", pushToken);
-
     const res = await fetch(`${API_BASE_URL}/api/driver/push-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -189,7 +186,6 @@ async function registerDriverPushToken(driverId: string) {
       const txt = await res.text();
       console.log("❌ /driver/push-token failed", res.status, txt.slice(0, 200));
     } else {
-      console.log("✅ Driver push token saved");
     }
   } catch (e) {
     console.log("❌ Error registering driver push token:", e);
@@ -199,7 +195,7 @@ async function registerDriverPushToken(driverId: string) {
 type Phase = "idle" | "toPickup" | "toDropoff";
 type LatLng = { lat: number; lng: number };
 
-export default function DHomeTaskPwApp() {
+export default function DHome() {
   const { location } = useLocation();
   const [isOnline, setIsOnline] = useState(false);
   const [mapHtml, setMapHtml] = useState("");
@@ -242,6 +238,7 @@ export default function DHomeTaskPwApp() {
   const msgQ = useRef<string[]>([]);
   const hasRegisteredPushRef = useRef(false);
   const [taskPwMinimized, setTaskPwMinimized] = useState(false);
+  const [panelMode, setPanelMode] = useState<"none" | "tasks" | "pw">("none");
 
   const sendToMap = (obj: any) => {
     const s = JSON.stringify(obj);
@@ -259,14 +256,25 @@ export default function DHomeTaskPwApp() {
 
   const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
 
-  function getJobStateFor(job: any | null) {
-    if (!job || !job.id) return defaultJobState;
-    return jobStateById[job.id] || defaultJobState;
+  function bookingKey(b: any | null) {
+    if (!b) return "";
+    return String(b.bookingId || b.id || b._id || "");
   }
-  const focusedJobState = getJobStateFor(incomingBooking);
+
+  function getJobStateFor(job: any | null) {
+    const key = bookingKey(job);
+    if (!key) return defaultJobState;
+    return jobStateById[key] || defaultJobState;
+  }
+  const focusedBooking =
+    (activeBookingId
+      ? activeJobs.find((j) => String(j.id) === String(activeBookingId))
+      : null) || null;
+  const focusedJobState = focusedBooking ? (jobStateById[bookingKey(focusedBooking)] || defaultJobState) : defaultJobState;
   const showWorkflowCard = !!incomingBooking && !minimized && !focusedJobState.paymentConfirm;
   const isPickedUp = focusedJobState.pickedUp;
-  const showPaymentCard = !!incomingBooking && !minimized && focusedJobState.paymentConfirm;
+  const showPaymentCard = !!focusedBooking && !minimized && focusedJobState.paymentConfirm;
+  const showIncomingCard = !!focusedBooking && !dropoff && !confirmed && !minimized && !previewBooking;
 
   const pickDisplayName = (b: any, passengerProfile?: any) => {
     const acctName = passengerProfile
@@ -591,27 +599,29 @@ export default function DHomeTaskPwApp() {
     return () => sub?.remove();
   }, [isOnline]);
 
-  // draw routes depending on phase
+  // ✅ draw route to ACTIVE task target
   useEffect(() => {
     const run = async () => {
+      if (!isOnline) return;
       if (!driverLoc) return;
-      if (!incomingBooking) return;
 
-      const state = getJobStateFor(incomingBooking);
-
-      const pickup = { lat: incomingBooking.pickupLat, lng: incomingBooking.pickupLng } as LatLng;
-      const dropoffPt = { lat: incomingBooking.destinationLat, lng: incomingBooking.destinationLng } as LatLng;
-
-      if (state.phase === "toPickup") {
-        const d = haversineMeters(driverLoc, pickup);
-        if (d < 8) return;
-        await routeAndDraw(driverLoc, pickup);
-      } else if (state.phase === "toDropoff") {
-        await routeAndDraw(driverLoc, dropoffPt);
+      const activeTask = tasks.active?.[0] || null;
+      if (!activeTask) {
+        sendToMap({ type: "clearRoute" });
+        return;
       }
+
+      const to = { lat: activeTask.lat, lng: activeTask.lng } as LatLng;
+
+      // small jitter guard
+      const d = haversineMeters(driverLoc, to);
+      if (d < 8) return;
+
+      await routeAndDraw(driverLoc, to);
     };
+
     run();
-  }, [driverLoc, incomingBooking, jobStateById]);
+  }, [isOnline, driverLoc, tasks.active]);
 
   const sendHeartbeat = async () => {
     try {
@@ -714,10 +724,15 @@ export default function DHomeTaskPwApp() {
 
         const acceptedOnly = data
           .filter((b: any) => b?.status === "accepted" && String(b?.driverId || "") === String(driverId))
-          .map((b: any) => ({
-            ...b,
-            displayName: b.bookedFor && b.riderName ? b.riderName : b.passengerName || "Passenger",
-          }));
+          .map((b: any) => {
+            const id = String(b.bookingId || b.id || b._id || "");
+            return {
+              ...b,
+              id, // ✅ normalize
+              displayName: b.bookedFor && b.riderName ? b.riderName : b.passengerName || "Passenger",
+            };
+          })
+          .filter((b: any) => !!b.id);
 
         setActiveJobs((prev) => {
           const prevMap = new Map(prev.map((j: any) => [String(j.id), j]));
@@ -762,12 +777,13 @@ export default function DHomeTaskPwApp() {
           return;
         }
 
-        const chosenId = String(chosen.bookingId || chosen.id || chosen._id);
+        const chosenId = bookingKey(chosen);
         bookingIdRef.current = chosenId;
         setJobStateById((prev) => ({
           ...prev,
           [chosenId]: prev[chosenId] || defaultJobState,
         }));
+        
       } catch (err) {
         console.error("❌ Failed to fetch booking:", err);
       }
@@ -808,7 +824,6 @@ export default function DHomeTaskPwApp() {
 
       let booking = result.booking as any;
       booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
-      console.log("[DHOME] booking raw from backend →", result.booking);
 
       const [pickupLabel, destinationLabel] = await Promise.all([
         getPlaceLabel(booking.pickupLat, booking.pickupLng),
@@ -893,7 +908,6 @@ export default function DHomeTaskPwApp() {
 
       let booking = result.booking as any;
       booking = { ...booking, id: booking.bookingId || booking.id || booking._id };
-      console.log("[DHOME] booking raw from backend →", result.booking);
 
       const [pickupLabel, destinationLabel] = await Promise.all([
         getPlaceLabel(booking.pickupLat, booking.pickupLng),
@@ -1066,15 +1080,16 @@ export default function DHomeTaskPwApp() {
 
   useEffect(() => {
     const bookingSeats = activeJobs.reduce((s, j) => s + (j.partySize || 1), 0);
-    const pwActive = (pwapp.list || []).filter(p => p.status === "ACTIVE").length;
+    const pwActive = (pwapp.list || []).filter((p) => p.status === "ACTIVE").length;
 
     const totalUsedSeats = bookingSeats + pwActive;
     const fullNow = capacity != null && totalUsedSeats >= capacity;
 
-    if (fullNow || incomingBooking) {
+    // ✅ Only force-close preview when capacity is FULL
+    if (fullNow) {
       if (previewBooking) setPreviewBooking(null);
     }
-  }, [capacity, activeJobs, pwapp.list, incomingBooking, previewBooking]);
+  }, [capacity, activeJobs, pwapp.list, previewBooking]);
 
   useEffect(() => {
     if (!isOnline || isFull) {
@@ -1086,12 +1101,20 @@ export default function DHomeTaskPwApp() {
     const newStatus = !isOnline;
     setIsOnline(newStatus);
     updateDriverStatus(newStatus);
+    if (newStatus && driverLoc && driverId) {
+      tasks.replan(driverLoc);
+    }
   };
 
   const handleSelectActiveJob = (job: any) => {
-    const id = String(job.id);
+    const id = bookingKey(job);
+    if (!id) return;
+
+    // normalize the job object so everywhere uses .id consistently
+    const normalized = { ...job, id };
+
     setActiveBookingId(id);
-    setIncomingBooking(job);
+    setIncomingBooking(normalized);
     setMinimized(false);
     setJobStateById((prev) => ({ ...prev, [id]: prev[id] || defaultJobState }));
   };
@@ -1108,6 +1131,39 @@ export default function DHomeTaskPwApp() {
       },
     });
   };
+
+  // --- task -> booking resolver (BOOKING tasks only) ---
+  function findBookingForTask(t: any) {
+    if (!t) return null;
+    if (t.sourceType !== "BOOKING") return null;
+
+    // your Task model uses sourceId = bookingId
+    const bid = String(t.sourceId || "");
+    if (!bid) return null;
+
+    // activeJobs items have .id = booking.bookingId (you set it that way)
+    const b = activeJobs.find((j) => String(j.id) === bid) || null;
+    return b;
+  }
+
+  function applyPickedUpForBookingId(bookingId: string) {
+    setJobStateById((prev) => ({
+      ...prev,
+      [bookingId]: { ...(prev[bookingId] || defaultJobState), pickedUp: true, phase: "toDropoff" },
+    }));
+  }
+
+  function applyDropoffForBookingId(bookingId: string) {
+    setJobStateById((prev) => ({
+      ...prev,
+      [bookingId]: {
+        ...(prev[bookingId] || defaultJobState),
+        pickedUp: true,
+        phase: "toDropoff",
+        paymentConfirm: true,
+      },
+    }));
+  }
 
   const markPickedUp = () => {
     if (!incomingBooking?.id) return;
@@ -1177,15 +1233,13 @@ export default function DHomeTaskPwApp() {
     }
   };
 
-  const showIncomingCard = !!incomingBooking && !dropoff && !confirmed && !minimized && !previewBooking;
-
   const showCapOverlay = isOnline;
   const showTodaPill = isOnline && currentToda && inTodaZone;
 
   const showGcashQR =
     focusedJobState.paymentConfirm &&
-    incomingBooking?.paymentMethod?.toLowerCase() === "gcash" &&
-    incomingBooking?.driverPayment?.qrUrl;
+    focusedBooking?.paymentMethod?.toLowerCase() === "gcash" &&
+    focusedBooking?.driverPayment?.qrUrl;
 
   return (
     <View style={styles.container}>
@@ -1262,6 +1316,119 @@ export default function DHomeTaskPwApp() {
         </View>
       )}
 
+      {/* ✅ LEFT FLOATING BUTTONS (Tasks + Roaming Passenger) */}
+      {isOnline && (
+        <View pointerEvents="box-none" style={styles.leftToolsWrap}>
+          {/* TASKS BUTTON */}
+          <TouchableOpacity
+            style={[styles.leftToolBtn, panelMode === "tasks" ? styles.leftToolBtnActive : null]}
+            onPress={() => setPanelMode((m) => (m === "tasks" ? "none" : "tasks"))}
+          >
+            <Ionicons name="list" size={20} color={panelMode === "tasks" ? "#fff" : "#111827"} />
+          </TouchableOpacity>
+
+          {/* + PASSENGER BUTTON */}
+          <TouchableOpacity
+            style={[styles.leftToolBtn, panelMode === "pw" ? styles.leftToolBtnActive : null]}
+            onPress={() => setPanelMode((m) => (m === "pw" ? "none" : "pw"))}
+          >
+            <Ionicons name="person-add" size={20} color={panelMode === "pw" ? "#fff" : "#111827"} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ✅ TASKS PANEL (separate) */}
+      {isOnline && panelMode === "tasks" && (
+        <View pointerEvents="box-none" style={styles.tasksPanelOverlay}>
+          <View pointerEvents="auto" style={styles.panelCard}>
+            <View style={styles.panelHeaderRow}>
+              <Text style={styles.panelTitle}>Tasks</Text>
+              <TouchableOpacity style={styles.panelCloseBtn} onPress={() => setPanelMode("none")}>
+                <Ionicons name="close" size={18} color="#111827" />
+              </TouchableOpacity>
+            </View>
+
+            <TaskProgressBar
+              active={tasks.active}
+              pending={tasks.pending}
+              getPassengerName={(t) => {
+                if (t.sourceType !== "BOOKING") return null;
+                const bookingId = String(t.sourceId || "");
+                if (!bookingId) return null;
+
+                const b = activeJobs.find((j) => String(j.id) === bookingId) || null;
+                return b?.displayName || b?.passengerName || null;
+              }}
+              onComplete={async (taskId) => {
+                if (!driverLoc) return;
+
+                const t = tasks.tasks.find((x) => String(x._id) === String(taskId));
+                await tasks.completeTask(taskId, driverLoc);
+
+                if (t?.sourceType === "BOOKING") {
+                  const bookingId = String(t.sourceId || "");
+                  if (!bookingId) return;
+
+                  // focus booking immediately
+                  const b = activeJobs.find((j) => String(j.id) === bookingId) || null;
+                  if (b) {
+                    const normalized = { ...b, id: bookingId };
+                    setIncomingBooking(normalized);
+                    setActiveBookingId(bookingId);
+                    setMinimized(false);
+                  }
+
+                  if (t.taskType === "PICKUP") {
+                    setJobStateById((prev) => ({
+                      ...prev,
+                      [bookingId]: {
+                        ...(prev[bookingId] || defaultJobState),
+                        pickedUp: true,
+                        phase: "toDropoff",
+                      },
+                    }));
+                  }
+
+                  if (t.taskType === "DROPOFF") {
+                    setJobStateById((prev) => ({
+                      ...prev,
+                      [bookingId]: {
+                        ...(prev[bookingId] || defaultJobState),
+                        pickedUp: true,
+                        phase: "toDropoff",
+                        paymentConfirm: true,
+                      },
+                    }));
+                  }
+                }
+              }}
+            />
+          </View>
+        </View>
+      )}
+
+      {/* ✅ ROAMING PASSENGER PANEL (separate) */}
+      {isOnline && panelMode === "pw" && (
+        <View pointerEvents="box-none" style={styles.pwPanelOverlay}>
+          <View pointerEvents="auto" style={styles.panelCard}>
+            <View style={styles.panelHeaderRow}>
+              <Text style={styles.panelTitle}>Roaming Passenger</Text>
+              <TouchableOpacity style={styles.panelCloseBtn} onPress={() => setPanelMode("none")}>
+                <Ionicons name="close" size={18} color="#111827" />
+              </TouchableOpacity>
+            </View>
+
+            <PwAppPanel
+              list={pwapp.list}
+              onAdd={pwapp.addPassenger}
+              onDropoff={pwapp.dropoff}
+              onQuote={pwapp.quoteDropoff}
+              onCancel={pwapp.cancelPassenger}
+            />
+          </View>
+        </View>
+      )}
+
       {showTodaPill && (
         <View pointerEvents="box-none" style={[styles.capOverlay, { top: 80 }]}>
           <View style={[styles.capPill, { backgroundColor: "#1e88e5" }]}>
@@ -1270,55 +1437,6 @@ export default function DHomeTaskPwApp() {
         </View>
       )}
 
-      {isOnline && (
-        <View pointerEvents="box-none" style={styles.taskPwOverlay}>
-          {taskPwMinimized ? (
-            <View style={styles.taskPwMiniRow} pointerEvents="auto">
-              <TouchableOpacity
-                style={styles.taskPwMiniBtn}
-                onPress={() => setTaskPwMinimized(false)}
-              >
-                <Text style={styles.taskPwMiniText}>▲ Add Passenger</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View pointerEvents="auto" style={styles.taskPwCardWrap}>
-              {/* header row with minimize */}
-              <View style={styles.taskPwHeaderRow}>
-                <Text style={styles.taskPwHeaderTitle}>Passenger Panel</Text>
-
-                <TouchableOpacity
-                  style={styles.taskPwMinBtn}
-                  onPress={() => setTaskPwMinimized(true)}
-                >
-                  <Text style={styles.taskPwMinBtnText}>Minimize</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TaskProgressBar
-                active={tasks.active}
-                pending={tasks.pending}
-                onComplete={async (taskId) => {
-                  await tasks.completeTask(taskId);
-                }}
-              />
-
-              <PwAppPanel
-                list={pwapp.list}
-                onAdd={pwapp.addPassenger}
-                onDropoff={pwapp.dropoff}
-              />
-            </View>
-          )}
-        </View>
-      )}
-
-      <AcceptedPassengersList
-        isOnline={isOnline}
-        activeJobs={activeJobs}
-        capacity={capacity}
-        onSelectJob={handleSelectActiveJob}
-      />
 
       <PreviewBookingCard previewBooking={previewBooking} onAccept={acceptPreview} onClose={() => setPreviewBooking(null)} />
 
@@ -1332,31 +1450,22 @@ export default function DHomeTaskPwApp() {
           }}
         />
       )}
-
       {minimized && (
         <TouchableOpacity style={styles.minimizedButton} onPress={() => setMinimized(false)}>
           <Text>🔍 View Booking Info</Text>
         </TouchableOpacity>
       )}
 
-      {showWorkflowCard && (
-        <WorkflowCard
-          isPickedUp={isPickedUp}
-          onChat={() => openChatForBooking(incomingBooking)}
-          onPickedUp={markPickedUp}
-          onDropOff={markDropOff}
-          onMinimize={() => setMinimized(true)}
-        />
-      )}
-
       {showPaymentCard && (
-        <PaymentCard
-          showGcashQR={!!showGcashQR}
-          gcashQrUrl={incomingBooking?.driverPayment?.qrUrl}
-          onChat={() => openChatForBooking(incomingBooking)}
-          onConfirmPayment={handleConfirmPayment}
-          onMinimize={() => setMinimized(true)}
-        />
+        <View pointerEvents="auto">
+          <PaymentCard
+            showGcashQR={!!showGcashQR}
+            gcashQrUrl={focusedBooking?.driverPayment?.qrUrl}
+            onChat={() => openChatForBooking(focusedBooking)}
+            onConfirmPayment={handleConfirmPayment}
+            onMinimize={() => setMinimized(true)}
+          />
+        </View>
       )}
 
       <DriverStatusBar
@@ -1465,5 +1574,77 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "900",
     fontSize: 12,
+  },
+
+  leftToolsWrap: {
+    position: "absolute",
+    left: 12,
+    top: 120,
+    zIndex: 999,
+    gap: 10,
+  },
+
+  leftToolBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    elevation: 8,
+  },
+
+  leftToolBtnActive: {
+    backgroundColor: "#111827",
+    borderColor: "#111827",
+  },
+
+  // ✅ PANELS (separate)
+  tasksPanelOverlay: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 88,
+    zIndex: 950,
+  },
+
+  pwPanelOverlay: {
+    position: "absolute",
+    left: 10,
+    right: 10,
+    bottom: 88,
+    zIndex: 950,
+  },
+
+  panelCard: {
+    gap: 10,
+  },
+
+  panelHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 2,
+    marginBottom: 6,
+  },
+
+  panelTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  panelCloseBtn: {
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 4,
   },
 });

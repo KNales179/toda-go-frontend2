@@ -36,18 +36,101 @@ export default function PChats() {
     return () => { mounted = false; };
   }, []);
 
+  const getImageUri = (path?: string | null) => {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    return `${API_BASE_URL.replace(/\/$/, "")}/${String(path).replace(/^\/+/, "")}`;
+  };
+
+  const fetchDriverProfile = useCallback(async (driverId: string) => {
+    try {
+      const url = `${API_BASE_URL.replace(/\/$/, "")}/api/driver/${driverId}`;
+      console.log("👤 Fetching driver profile:", url);
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      console.log("✅ Driver profile response:", driverId, data);
+
+      return data?.driver ?? null;
+    } catch (err) {
+      console.error("❌ fetchDriverProfile error:", driverId, err);
+      return null;
+    }
+  }, []);
+
   const fetchSessions = useCallback(async () => {
     if (!passengerId) return;
+
     try {
-      const res = await fetch(`${API}/sessions/passenger/${passengerId}`);
+      const url = `${API}/sessions/passenger/${passengerId}`;
+      console.log("📥 Fetching passenger sessions from:", url);
+      console.log("🆔 passengerId:", passengerId);
+
+      const res = await fetch(url);
       const data = await res.json();
-      setSessions(Array.isArray(data) ? data : []);
+
+      console.log("✅ Raw passenger sessions response:", data);
+
+      const rawSessions = Array.isArray(data) ? data : [];
+
+      const enrichedSessions = await Promise.all(
+        rawSessions.map(async (item, index) => {
+          console.log(`📨 Session[${index}]`, {
+            bookingId: item.bookingId,
+            driverId: item.driverId,
+            driverName: item.driverName,
+            passengerId: item.passengerId,
+            lastMessage: item.lastMessage,
+            lastAt: item.lastAt,
+          });
+
+          if (!item.driverId) {
+            return {
+              ...item,
+              driverProfileImage: null,
+            };
+          }
+
+          const driver = await fetchDriverProfile(String(item.driverId));
+
+          const selfieImage = driver?.selfieImage ?? null;
+          const driverName =
+            item.driverName && item.driverName !== "Driver"
+              ? item.driverName
+              : driver?.driverName ||
+                [
+                  driver?.driverFirstName,
+                  driver?.driverMiddleName,
+                  driver?.driverLastName,
+                  driver?.driverSuffix,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim() ||
+                "Driver";
+
+          console.log("🖼️ Enriched session:", {
+            driverId: item.driverId,
+            resolvedDriverName: driverName,
+            selfieImage,
+          });
+
+          return {
+            ...item,
+            driverName,
+            driverProfileImage: selfieImage,
+          };
+        })
+      );
+
+      setSessions(enrichedSessions);
     } catch (err) {
       console.error("❌ fetch passenger sessions:", err);
     } finally {
       setLoading(false);
     }
-  }, [passengerId]);
+  }, [passengerId, fetchDriverProfile]);
 
   // Socket + initial fetch whenever passengerId becomes available
   useEffect(() => {
@@ -103,32 +186,132 @@ export default function PChats() {
     );
   }
 
-  const renderItem = ({ item }: { item: any }) => (
-    <TouchableOpacity
-      style={styles.row}
-      onPress={() =>
-        router.push({
-          pathname: "/ChatRoom",
-          params: {
-            bookingId: String(item.bookingId ?? ""),
-            driverId: item.driverId,
-            passengerId, // from AsyncStorage
-            role: "passenger",
-          },
-        })
-      }
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={styles.booking}>{item.driverName || "Driver"}</Text>
-        <Text numberOfLines={1} style={styles.preview}>
-          {item.lastMessage || "— no messages yet —"}
-        </Text>
-      </View>
-      <Text style={styles.time}>
-        {item.lastAt ? new Date(item.lastAt).toLocaleString() : ""}
-      </Text>
-    </TouchableOpacity>
-  );
+  const formatChatTime = (date?: string | null) => {
+    if (!date) return "";
+
+    const d = new Date(date);
+    const now = new Date();
+
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+
+    if (sameDay) {
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+
+    return d.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const getLastStatusText = (item: any) => {
+    const isMyLastMessage =
+      item?.lastMessageSenderRole === "passenger" &&
+      String(item?.lastMessageSenderId ?? "") === String(passengerId ?? "");
+
+    if (!isMyLastMessage) return "";
+
+    if (item?.seen) return "Seen";
+    if (item?.delivered) return "Delivered";
+    return "Sent";
+  };
+
+  const renderItem = ({ item }: { item: any }) => {
+    const avatarUri = getImageUri(item.driverProfileImage);
+    const unreadCount = Number(item?.unseenCount ?? 0);
+    const isUnread = unreadCount > 0;
+    const statusText = getLastStatusText(item);
+
+    console.log("🖼️ Rendering chat row:", {
+      driverId: item.driverId,
+      driverName: item.driverName,
+      unreadCount,
+      seen: item.seen,
+      delivered: item.delivered,
+      lastMessageSenderRole: item.lastMessageSenderRole,
+      lastMessageSenderId: item.lastMessageSenderId,
+    });
+
+    return (
+      <TouchableOpacity
+        style={[styles.chatCard, isUnread && styles.chatCardUnread]}
+        activeOpacity={0.85}
+        onPress={() =>
+          router.push({
+            pathname: "/ChatRoom",
+            params: {
+              bookingId: String(item.bookingId ?? ""),
+              driverId: item.driverId,
+              passengerId,
+              role: "passenger",
+              driverName: item.driverName ?? "",
+              driverProfileImage: item.driverProfileImage ?? "",
+            },
+          })
+        }
+      >
+        <View style={styles.avatarWrap}>
+          <Image
+            source={
+              avatarUri
+                ? { uri: avatarUri }
+                : require("../../assets/images/profile-placeholder.jpg")
+            }
+            style={styles.avatar}
+          />
+
+          {isUnread ? <View style={styles.onlineDot} /> : null}
+        </View>
+
+        <View style={styles.chatBody}>
+          <View style={styles.topRow}>
+            <Text
+              numberOfLines={1}
+              style={[styles.booking, isUnread && styles.bookingUnread]}
+            >
+              {item.driverName || "Driver"}
+            </Text>
+
+            <Text style={[styles.time, isUnread && styles.timeUnread]}>
+              {formatChatTime(item.lastAt)}
+            </Text>
+          </View>
+
+          <View style={styles.bottomRow}>
+            <View style={styles.previewWrap}>
+              <Text
+                numberOfLines={1}
+                style={[styles.preview, isUnread && styles.previewUnread]}
+              >
+                {item.lastMessage || "— no messages yet —"}
+              </Text>
+
+              {!!statusText && !isUnread ? (
+                <Text numberOfLines={1} style={styles.statusText}>
+                  {statusText}
+                </Text>
+              ) : null}
+            </View>
+
+            {isUnread ? (
+              unreadCount > 1 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.unreadDot} />
+              )
+            ) : null}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -148,6 +331,8 @@ export default function PChats() {
           data={sessions}
           keyExtractor={(i) => `${i.driverId}-${i.bookingId ?? ""}`}
           renderItem={renderItem}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          showsVerticalScrollIndicator={false}
         />
       )}
     </View>
@@ -155,14 +340,171 @@ export default function PChats() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, paddingTop: 50 },
-  title: { fontSize: 20, fontWeight: "700", marginBottom: 12 },
-  row: { padding: 12, borderBottomWidth: 1, borderColor: "#eee", flexDirection: "row", alignItems: "center" },
-  booking: { fontWeight: "700" },
-  preview: { color: "#333", marginTop: 4, maxWidth: 220 },
-  time: { fontSize: 11, color: "#888" },
-  loading: { flex: 1, justifyContent: "center", alignItems: "center" },
-  contentContainer: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 20 },
-  chatImage: { width: 150, height: 150, marginBottom: 20, resizeMode: "contain" },
-  message: { textAlign: "center", fontSize: 14, color: "#333" },
+  container: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    paddingTop: 50,
+  },
+
+  title: {
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    color: "#111827",
+  },
+
+  chatCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#F8FAFC",
+  },
+
+  chatCardUnread: {
+    backgroundColor: "#EEF6FF",
+  },
+
+  avatarWrap: {
+    position: "relative",
+    marginRight: 12,
+  },
+
+  avatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "#D1D5DB",
+  },
+
+  onlineDot: {
+    position: "absolute",
+    right: 1,
+    bottom: 1,
+    width: 13,
+    height: 13,
+    borderRadius: 999,
+    backgroundColor: "#3B82F6",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+
+  chatBody: {
+    flex: 1,
+    minWidth: 0,
+    borderBottomWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingBottom: 10,
+  },
+
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 3,
+  },
+
+  bottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  previewWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
+  },
+
+  booking: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginRight: 8,
+  },
+
+  bookingUnread: {
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+
+  preview: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+
+  previewUnread: {
+    color: "#111827",
+    fontWeight: "700",
+  },
+
+  statusText: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+
+  time: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+
+  timeUnread: {
+    color: "#2563EB",
+    fontWeight: "700",
+  },
+
+  unreadDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    marginLeft: 8,
+  },
+
+  badge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    marginLeft: 8,
+  },
+
+  badgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  loading: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+  },
+
+  contentContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+
+  chatImage: {
+    width: 150,
+    height: 150,
+    marginBottom: 20,
+    resizeMode: "contain",
+  },
+
+  message: {
+    textAlign: "center",
+    fontSize: 14,
+    color: "#4B5563",
+    lineHeight: 21,
+  },
 });

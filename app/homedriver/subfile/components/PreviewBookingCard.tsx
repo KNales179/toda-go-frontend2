@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     elevation: 5,
-    zIndex: 99,
+    zIndex: 999,
   },
   popupTitle: { fontWeight: "bold", fontSize: 16, marginBottom: 5 },
   acceptButton: {

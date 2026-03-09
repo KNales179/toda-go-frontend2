@@ -7,13 +7,11 @@ export default function DNotifDetails() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
 
-  console.log("🧾 [DDETAILS] route.params:", route.params);
 
   const notif = useMemo(() => {
     return route.params?.item || null; // passed as object from navigate()
   }, [route.params]);
 
-  console.log("🧾 [DDETAILS] notif id:", notif?._id);
 
   const fromLabel =
     notif?.meta?.fromLabel ||

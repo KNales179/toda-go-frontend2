@@ -53,15 +53,17 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
             let pickupMarker = null;
             let destinationMarker = null;
             let driverMarker = null;
+
+            // ORS route (ONLY one real route line)
             let routeLine = null;
             let midTooltipMarker = null;
+
             let waitingLayer = null;
             let todaLayer = null;
 
-            // ✅ NEW layers
+            // layers
             let pwappLayer = null;
             let taskLayer = null;
-            let taskOrderLine = null;
 
             // Debug overlay
             let __dbgDiv = null;
@@ -104,7 +106,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
               } catch {}
             };
 
-            // --- Driver marker tween (keep 1 version only) ---
+            // --- Driver marker tween ---
             let tweenHandle = null;
             function tweenDriverTo(lat, lng, durationMs = 320) {
               if (!driverMarker) {
@@ -142,19 +144,16 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
             }).setView([${initialLat}, ${initialLng}], 15)
               .fitBounds([[13.96, 121.643], [13.88,121.588]]);
 
-            L.tileLayer('https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=7yQg8w68otDEssrPk9wU', {
-              maxZoom: 19,
-              attribution: '© <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | © <a href="https://www.maptiler.com/">MapTiler</a>'
-            }).addTo(map);
+            L.tileLayer(
+              'https://api.maptiler.com/maps/openstreetmap/256/{z}/{x}/{y}.png?key=7yQg8w68otDEssrPk9wU',
+              {
+                maxZoom: 19,
+                attribution:
+                  '&copy; <a href="https://www.maptiler.com/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+              }
+            ).addTo(map);
 
             driverMarker = L.marker([${initialLat}, ${initialLng}]).addTo(map);
-
-            // ✅ helpers to clear layers
-            function clearLayer(layerRefName){
-              try {
-                if (layerRefName && map.hasLayer(layerRefName)) map.removeLayer(layerRefName);
-              } catch {}
-            }
 
             function resetPwappLayer(){
               if (pwappLayer) { pwappLayer.clearLayers(); map.removeLayer(pwappLayer); }
@@ -164,8 +163,6 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
             function resetTaskLayer(){
               if (taskLayer) { taskLayer.clearLayers(); map.removeLayer(taskLayer); }
               taskLayer = L.layerGroup().addTo(map);
-
-              if (taskOrderLine) { map.removeLayer(taskOrderLine); taskOrderLine = null; }
             }
 
             // ✅ Task marker factory (numbered)
@@ -201,7 +198,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                       iconUrl: 'https://maps.gstatic.com/mapfiles/ms2/micons/green-dot.png',
                       iconSize: [30, 30],
                     })
-                  }).addTo(map).bindTooltip("🎯 Destination", { permanent: true, direction: "top" });
+                  }).addTo(map).bindTooltip("Destination", { permanent: true, direction: "top" });
                 }
                 return;
               }
@@ -220,17 +217,19 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                 return;
               }
 
+              // ✅ Real ORS route line only
               if (msg.type === 'drawRoute') {
                 if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
                 if (midTooltipMarker) { map.removeLayer(midTooltipMarker); midTooltipMarker = null; }
 
+                // msg.coords is expected [ [lat,lng], ... ]
                 routeLine = L.polyline(msg.coords, { weight: 5 }).addTo(map);
                 map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
 
                 const idx = Math.floor(msg.coords.length / 2);
                 const mid = msg.coords[idx] || msg.coords[0];
-                const km = (msg.summary.distance / 1000).toFixed(2);
-                const eta = formatDuration(msg.summary.duration);
+                const km = ((msg.summary?.distance || 0) / 1000).toFixed(2);
+                const eta = formatDuration(msg.summary?.duration || 0);
 
                 midTooltipMarker = L.marker(mid, { opacity: 0 })
                   .addTo(map)
@@ -255,7 +254,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                     icon: iconForBookingType(it.bookingType),
                   })
                   .addTo(waitingLayer)
-                  .bindTooltip('🧍 ' + (it.bookingType || 'CLASSIC') + ' #' + it.id, { direction: 'top' });
+                  .bindTooltip('' + (it.bookingType || 'CLASSIC') + ' #' + it.id, { direction: 'top' });
 
                   marker.on('click', function() {
                     window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -284,16 +283,13 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                   }).addTo(todaLayer);
 
                   if (z.name) {
-                    circle.bindTooltip(z.name, {
-                      direction: 'top',
-                      permanent: false,
-                    });
+                    circle.bindTooltip(z.name, { direction: 'top', permanent: false });
                   }
                 });
                 return;
               }
 
-              // ✅ NEW: pwApp pickup pins
+              // ✅ pwApp pickup pins
               if (msg.type === 'setPwAppMarkers') {
                 resetPwappLayer();
                 var items = Array.isArray(msg.items) ? msg.items : [];
@@ -307,8 +303,7 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                 return;
               }
 
-              // ✅ NEW: ordered task plan (which pickup first / dropoff first)
-              // Expected:
+              // ✅ Task markers only (NO connecting line)
               // { type:'setTaskPlan', tasks:[{id,lat,lng,taskType,label,status}], activeTaskId:'...' }
               if (msg.type === 'setTaskPlan') {
                 resetTaskLayer();
@@ -316,31 +311,25 @@ export function buildDriverMapHtml(initialLat: number, initialLng: number) {
                 var tasks = Array.isArray(msg.tasks) ? msg.tasks : [];
                 var activeTaskId = msg.activeTaskId ? String(msg.activeTaskId) : null;
 
-                // Draw markers
-                var linePts = [];
                 tasks.forEach(function(t, idx){
                   var lat = Number(t.lat), lng = Number(t.lng);
                   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
                   var id = String(t.id || t._id || idx);
-                  var isActive = activeTaskId && String(activeTaskId) === id || String(t.status||'').toUpperCase() === 'ACTIVE';
+                  var isActive =
+                    (activeTaskId && String(activeTaskId) === id) ||
+                    String(t.status||'').toUpperCase() === 'ACTIVE';
 
                   var icon = makeTaskIcon(idx + 1, t.taskType, isActive);
 
                   var title = (String(t.taskType||'').toUpperCase() === 'PICKUP') ? 'Pickup' : 'Dropoff';
                   var label = t.label ? String(t.label) : (lat.toFixed(4) + ', ' + lng.toFixed(4));
 
-                  var marker = L.marker([lat, lng], { icon: icon })
+                  L.marker([lat, lng], { icon: icon })
                     .addTo(taskLayer)
                     .bindTooltip((idx+1) + ') ' + title + ' • ' + label, { direction:'top' });
-
-                  linePts.push([lat, lng]);
                 });
 
-                // Draw faint order line (optional)
-                if (linePts.length >= 2) {
-                  taskOrderLine = L.polyline(linePts, { weight: 3, opacity: 0.6, dashArray: '6 8' }).addTo(map);
-                }
                 return;
               }
 

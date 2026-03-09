@@ -66,7 +66,7 @@ export default function PProfile() {
     discountStatus === "pending"
       ? "Verifying Discount Application…"
       : discountStatus === "approved"
-      ? "Discount Approved ✅"
+      ? "Discount Approved"
       : discountStatus === "rejected"
       ? "Discount Rejected (Tap to Resubmit)"
       : "Apply for Discount";

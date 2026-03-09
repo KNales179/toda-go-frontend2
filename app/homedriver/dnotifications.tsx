@@ -57,9 +57,6 @@ export default function DNotificationsScreen() {
       const driverId = await AsyncStorage.getItem("driverId");
       const token = await AsyncStorage.getItem("driverToken");
 
-      console.log("🔔 [DNOTIFS] driverId:", driverId);
-      console.log("🔐 [DNOTIFS] token exists?:", !!token);
-
       if (!driverId || !token) {
         setNotifications([]);
         return;
@@ -78,9 +75,6 @@ export default function DNotificationsScreen() {
       } catch {
         console.log("❌ [DNOTIFS] non-JSON body (first 200):", text.slice(0, 200));
       }
-
-      console.log("📦 [DNOTIFS] status:", res.status);
-      console.log("📦 [DNOTIFS] response:", data);
 
       if (!res.ok) {
         setNotifications([]);

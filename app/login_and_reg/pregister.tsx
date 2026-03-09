@@ -47,7 +47,6 @@ export default function PRegister() {
         password,
       };
 
-      console.log("📤 handleRegister → sending payload:", payload);
 
       const response = await fetch(`${API_BASE_URL}/api/auth/passenger/register-passenger`, {
         method: 'POST',
@@ -56,16 +55,12 @@ export default function PRegister() {
       });
 
       const text = await response.text();
-      console.log("📥 handleRegister → raw response:", text);
-
       let data: any;
       try {
         data = JSON.parse(text);
       } catch {
         data = { raw: text };
       }
-
-      console.log("📥 handleRegister → parsed response:", data);
 
       if (response.ok) {
         Alert.alert('Success', data.message || "Registered successfully");

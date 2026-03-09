@@ -21,6 +21,12 @@ export default function DriverStatusBar({
   usedSeats,
   onToggleOnline,
 }: Props) {
+
+  // ✅ Hide the status bar when driver already has an active booking
+  if (activeJobsCount > 0) {
+    return null;
+  }
+
   return (
     <View style={styles.statusBar}>
       <Switch

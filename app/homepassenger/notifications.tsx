@@ -37,9 +37,6 @@ export default function NotificationsScreen() {
         const passengerId = await AsyncStorage.getItem("passengerId");
         const token = await AsyncStorage.getItem("token");
 
-        console.log("🔔 [NOTIFS] passengerId:", passengerId);
-        console.log("🔐 [NOTIFS] token exists?:", !!token);
-
         if (!passengerId) {
           console.log("❌ [NOTIFS] Missing passengerId");
           setNotifications([]);
@@ -50,7 +47,6 @@ export default function NotificationsScreen() {
           passengerId
         )}`;
 
-        console.log("➡️ [NOTIFS] Fetch URL:", url);
 
         const res = await fetch(url, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -65,9 +61,6 @@ export default function NotificationsScreen() {
           console.log("❌ [NOTIFS] non-JSON body (first 200):", text.slice(0, 200));
         }
 
-        console.log("📦 [NOTIFS] status:", res.status);
-        console.log("📦 [NOTIFS] response:", data);
-
         if (!res.ok) {
           console.log("❌ [NOTIFS] fetch failed:", res.status, data);
           setNotifications([]);
@@ -75,8 +68,6 @@ export default function NotificationsScreen() {
         }
 
         const list = Array.isArray(data?.items) ? data.items : [];
-        console.log("✅ [NOTIFS] items:", list.length);
-
         setNotifications(list);
       } catch (err) {
         console.error("❌ Failed to fetch notifications:", err);
@@ -102,7 +93,6 @@ export default function NotificationsScreen() {
   const markAsRead = async (id: string) => {
     try {
       const token = await AsyncStorage.getItem("token");
-      console.log("✅ [NOTIFS] markAsRead:", id, "token?", !!token);
 
       const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, {
         method: "PATCH",

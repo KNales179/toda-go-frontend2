@@ -67,7 +67,6 @@ export default function DLogin() {
       if (token) {
         await AsyncStorage.setItem("driverToken", String(token));
       } else {
-        console.log("⚠️ [DLOGIN] No token returned from backend!");
       }
 
 

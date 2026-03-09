@@ -33,7 +33,7 @@ export default function PaymentCard({
       )}
 
       <Text style={{ fontWeight: "bold", color: "#ff9800" }}>
-        💰 Confirm Payment
+        Confirm Payment
       </Text>
       <Text>Ask the passenger for payment and confirm here.</Text>
 
@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 10,
     elevation: 5,
-    zIndex: 99,
+    zIndex: 9999,
   },
   gcashContainer: {
     flexDirection: "column",

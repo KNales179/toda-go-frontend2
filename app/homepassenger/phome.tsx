@@ -102,7 +102,6 @@ const firedLocalNotifs = new Set<string>();
 async function localNotify(title: string, body: string, rawKey?: string) {
   const key = rawKey || `${title}|${body}`;
   if (firedLocalNotifs.has(key)) {
-    console.log("🔕 Skipping duplicate local notification:", key);
     return;
   }
   firedLocalNotifs.add(key);
@@ -243,6 +242,261 @@ export default function PHome() {
   const fabAnim = useRef(new Animated.Value(0)).current; // 0 closed, 1 open
   const [showFareInfo, setShowFareInfo] = useState(false);
 
+  const BOOKING_DEBUG = true;
+
+  const persistBookingState = async (overrides?: Partial<any>) => {
+    try {
+      const bookingState = {
+        destination,
+        destinationLabel,
+        notes,
+        paymentMethod,
+        fare,
+        matchedDriver,
+        bookingConfirmed,
+        bookingId,
+        showBookingForm,
+        searching,
+        pickup,
+        pickupName,
+        dropoffName,
+        bookingType,
+        partySize,
+        ...overrides,
+      };
+
+      await AsyncStorage.setItem("phomeBookingState", JSON.stringify(bookingState));
+    } catch (err) {
+      console.warn("Error persisting booking state:", err);
+    }
+  };
+
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
+
+  
+  const resetFareBreakdown = () => {
+    setFare(0);
+    setLastDistanceKm(null);
+    setLastDistanceText(null);
+    setLastDurationText(null);
+    setRouteOptions([]);
+    setSelectedRouteIndex(null);
+
+    lastRouteDestKeyRef.current = null;
+    lastRouteFromRef.current = null;
+    lastRouteToRef.current = null;
+    lastRouteAtRef.current = 0;
+    routeFramedRef.current = false;
+  };
+
+  const restoreBookingFromServer = async (id: string | number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/bookings`);
+      const allBookings = await res.json();
+
+      const liveBooking = Array.isArray(allBookings)
+        ? allBookings.find((b: any) =>
+            b &&
+            String(b.id ?? b.bookingId ?? b._id) === String(id)
+          )
+        : null;
+
+
+      if (!liveBooking) {
+        await AsyncStorage.removeItem("phomeBookingState");
+        setBookingId(null);
+        setBookingConfirmed(false);
+        setMatchedDriver(null);
+        setSearching(false);
+        return;
+      }
+
+      const liveStatus = String(liveBooking.status || "").toLowerCase();
+
+      // Save whole booking locally for easy access
+      setCurrentBooking(liveBooking);
+
+      // Restore basic booking id
+      setBookingId(liveBooking.bookingId || liveBooking.id || liveBooking._id || null);
+
+      // Restore pickup / destination from backend
+      const restoredPickup =
+        Number.isFinite(liveBooking.pickupLat) && Number.isFinite(liveBooking.pickupLng)
+          ? { latitude: Number(liveBooking.pickupLat), longitude: Number(liveBooking.pickupLng) }
+          : null;
+
+      const restoredDestination =
+        Number.isFinite(liveBooking.destinationLat) && Number.isFinite(liveBooking.destinationLng)
+          ? { latitude: Number(liveBooking.destinationLat), longitude: Number(liveBooking.destinationLng) }
+          : null;
+
+      if (restoredPickup) {
+        setPickup(restoredPickup);
+        sendToMap({
+          type: "setPickup",
+          latitude: restoredPickup.latitude,
+          longitude: restoredPickup.longitude,
+        });
+      }
+
+      if (restoredDestination) {
+        setDestination(restoredDestination);
+      }
+
+      if (liveBooking.pickupPlace) setPickupName(String(liveBooking.pickupPlace));
+      if (liveBooking.destinationPlace) setDropoffName(String(liveBooking.destinationPlace));
+      if (liveBooking.paymentMethod) setPaymentMethod(String(liveBooking.paymentMethod));
+      if (liveBooking.notes) setNotes(String(liveBooking.notes));
+
+      if (liveBooking.bookingType) {
+        setBookingType(String(liveBooking.bookingType).toUpperCase() as "CLASSIC" | "GROUP" | "SOLO");
+      }
+
+      if (liveBooking.partySize) {
+        setPartySize(Number(liveBooking.partySize) || 2);
+      }
+
+      // STATUS: pending/searching
+      if (liveStatus === "pending") {
+        setSearching(true);
+        setBookingConfirmed(false);
+        setMatchedDriver(null);
+
+        sendToMap({
+          type: "setMarkers",
+          destination: restoredDestination,
+          driver: null,
+          pickup: restoredPickup,
+        });
+
+        if (restoredPickup && restoredDestination) {
+          lastRouteFromRef.current = { lat: restoredPickup.latitude, lng: restoredPickup.longitude };
+          lastRouteToRef.current = { lat: restoredDestination.latitude, lng: restoredDestination.longitude };
+          lastRouteAtRef.current = Date.now();
+          fetchRouteVariants();
+        }
+
+        return;
+      }
+
+      // STATUS: accepted / ongoing
+      if (liveStatus === "accepted" || liveStatus === "ongoing") {
+        setSearching(false);
+        setBookingConfirmed(true);
+
+        if (liveBooking.driverId) {
+          try {
+            const [driverRes, statusRes] = await Promise.all([
+              fetch(`${API_BASE_URL}/api/driver/${liveBooking.driverId}`),
+              fetch(`${API_BASE_URL}/api/driver-status/${liveBooking.driverId}`),
+            ]);
+
+            const driverData = await driverRes.json();
+            const statusData = await statusRes.json();
+
+            if (driverData?.driver) {
+              const restoredDriver = {
+                driverName: driverData.driver.driverName,
+                driverId: driverData.driver._id,
+                franchiseNumber: driverData.driver.franchiseNumber || "N/A",
+                experienceYears: driverData.driver.experienceYears || "N/A",
+                selfieImage: driverData.driver.selfieImage || "N/A",
+                location: statusData.location || null,
+              };
+
+              setMatchedDriver(restoredDriver);
+
+              sendToMap({
+                type: "setMarkers",
+                destination: restoredDestination,
+                driver: restoredDriver.location
+                  ? {
+                      latitude: restoredDriver.location.latitude,
+                      longitude: restoredDriver.location.longitude,
+                    }
+                  : null,
+                pickup: restoredPickup,
+              });
+            }
+          } catch {}
+        }
+
+        if (restoredPickup && restoredDestination) {
+          lastRouteFromRef.current = { lat: restoredPickup.latitude, lng: restoredPickup.longitude };
+          lastRouteToRef.current = { lat: restoredDestination.latitude, lng: restoredDestination.longitude };
+          lastRouteAtRef.current = Date.now();
+          fetchRouteVariants();
+        }
+
+        if (liveBooking.bookingId || liveBooking.id || liveBooking._id) {
+          loadPaymentInfo(String(liveBooking.bookingId || liveBooking.id || liveBooking._id));
+        }
+
+        return;
+      }
+
+      // STATUS: completed / canceled
+      if (liveStatus === "completed" || liveStatus === "canceled") {
+        await AsyncStorage.removeItem("phomeBookingState");
+        setSearching(false);
+        setBookingConfirmed(false);
+        setMatchedDriver(null);
+        setBookingId(null);
+        setDestination(null);
+        resetFareBreakdown();
+        sendToMap({ type: "setMarkers", destination: null, driver: null, pickup: null });
+        sendToMap({ type: "clearRoute" });
+        sendToMap({ type: "clearPickup" });
+      }
+    } catch (e) {
+      console.log("[PHOME] restoreBookingFromServer error", e);
+    }
+  };
+
+  const restoreLatestBookingForPassenger = async () => {
+    try {
+      if (!passengerId) {
+        return;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/bookings`);
+      const allBookings = await res.json();
+
+      if (!Array.isArray(allBookings)) {
+        return;
+      }
+
+      const mine = allBookings.filter((b: any) => {
+        const bPassengerId =
+          b?.passengerId?._id ||
+          b?.passengerId?.id ||
+          b?.passengerId ||
+          null;
+
+        const status = String(b?.status || "").toLowerCase();
+        return (
+          String(bPassengerId) === String(passengerId) &&
+          ["pending", "accepted", "ongoing"].includes(status)
+        );
+      });
+
+      if (!mine.length) {
+        return;
+      }
+
+      const latest = mine[mine.length - 1];
+      const latestId = latest.bookingId || latest.id || latest._id;
+
+
+      if (latestId) {
+        await restoreBookingFromServer(latestId);
+      }
+    } catch (e) {
+    }
+  };
+
   // ordinance constants (hardcoded for now)
   const REG_BASE_FARE = 20;       // first 2 km (per passenger)
   const REG_BASE_KM = 2;
@@ -283,8 +537,43 @@ export default function PHome() {
     }).start();
   };
 
+  useEffect(() => {
+    if (!searching) return;
 
+    const animateDot = (dot: Animated.Value, delay: number) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot, {
+            toValue: 0.3,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ])
+      );
 
+    const a1 = animateDot(dot1, 0);
+    const a2 = animateDot(dot2, 180);
+    const a3 = animateDot(dot3, 360);
+
+    a1.start();
+    a2.start();
+    a3.start();
+
+    return () => {
+      dot1.stopAnimation();
+      dot2.stopAnimation();
+      dot3.stopAnimation();
+      dot1.setValue(0.3);
+      dot2.setValue(0.3);
+      dot3.setValue(0.3);
+    };
+  }, [searching]);
 
   useEffect(() => {
     if (!selectedRoute || typeof selectedRoute.distanceKm !== "number") return;
@@ -1136,16 +1425,9 @@ export default function PHome() {
   }, [pickup]);
 
   useEffect(() => {
-    console.log("[PHome] HTML built once?", !!mapHtml);
   }, [mapHtml]);
 
   useEffect(() => {
-    console.log('[PHome] guards:',
-      'hasLocation=', !!location,
-      'haspickup=', !!pickup,
-      'hasIconData=', !!iconData,
-      'hasMapHtml=', !!mapHtml
-    );
   }, [location, pickup, iconData, mapHtml]);
 
   useEffect(() => {
@@ -1216,11 +1498,9 @@ export default function PHome() {
       }
 
       if (parsed.type === 'dbg' && parsed.tag === 'nudgeRouteStart') {
-        console.log('[MAP] nudge dbg:', parsed);
         return;
       }
       if (parsed.type === 'nudgeAck') {
-        console.log('[MAP] nudgeAck ok=', parsed.ok);
         return;
       }
       if (parsed.type === 'userMarkerEnsured') {
@@ -1304,7 +1584,6 @@ export default function PHome() {
                 sendToMap({ type: 'setPOIs', items: [] });
               }
             } catch (e) {
-              console.log('[ERR] POI fetch failed for', key, e);
               sendToMap({ type: 'setPOIs', items: [] });
             } finally {
               inflightRef.current.delete(key);
@@ -1385,7 +1664,6 @@ export default function PHome() {
 
       sendToMap({ type: 'setTodas', items });
     } catch (e) {
-      console.log('[PHome] loadTodas failed', e);
       sendToMap({ type: 'clearTodas' });
     }
   };
@@ -1470,12 +1748,6 @@ export default function PHome() {
 
     };
     if (chosenRoutePayload && Array.isArray(chosenRoutePayload.coords)) {
-      console.log("Coords length:", chosenRoutePayload.coords.length);
-      console.log("First coord:", chosenRoutePayload.coords[0]);
-      console.log(
-        "Last coord:",
-        chosenRoutePayload.coords[chosenRoutePayload.coords.length - 1]
-      );
     }
 
 
@@ -1499,7 +1771,18 @@ export default function PHome() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Something went wrong");
 
-      setBookingId(result.booking.bookingId || result.booking.id || result.booking._id);
+      const createdBookingId =
+        result.booking.bookingId || result.booking.id || result.booking._id;
+
+
+      setBookingId(createdBookingId);
+
+      await persistBookingState({
+        bookingId: createdBookingId,
+        searching: true,
+        showBookingForm: false,
+        bookingConfirmed: false,
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to send booking. Please try again.");
       setSearching(false);
@@ -1538,7 +1821,6 @@ export default function PHome() {
 
       Alert.alert("Saved!", "GCash QR saved to your gallery.");
     } catch (e: any) {
-      console.log("QR download error:", e?.message || e);
       Alert.alert("Download failed", "Could not download the QR code.");
     }
   };
@@ -1579,6 +1861,7 @@ export default function PHome() {
         });
 
         if (!myBooking) return;
+        setCurrentBooking(myBooking);
 
         if (
           myBooking.status === "accepted" &&
@@ -1669,6 +1952,7 @@ export default function PHome() {
         });
 
         if (!myBooking) return;
+        setCurrentBooking(myBooking);
 
         if (
           myBooking.status === "completed" &&
@@ -1708,7 +1992,7 @@ export default function PHome() {
           sendToMap({ type: "clearRoute" });
           sendToMap({ type: 'clearPickup' });
 
-          setFare(0);
+          resetFareBreakdown();
         }
       } catch (err) {
         console.error("❌ Poll error:", err);
@@ -1726,38 +2010,97 @@ export default function PHome() {
 
   useEffect(() => {
     const saveBookingState = async () => {
+      const hasActiveTransaction =
+        !!bookingId || !!searching || !!bookingConfirmed || !!matchedDriver;
+
       const bookingState = {
-        destination, destinationLabel, notes, paymentMethod, fare,
-        matchedDriver, bookingConfirmed, bookingId, showBookingForm, searching,
+        destination,
+        destinationLabel,
+        notes,
+        paymentMethod,
+        fare,
+        matchedDriver,
+        bookingConfirmed,
+        bookingId,
+        showBookingForm,
+        searching,
+        pickup,
+        pickupName,
+        dropoffName,
+        bookingType,
+        partySize,
       };
-      try { await AsyncStorage.setItem("phomeBookingState", JSON.stringify(bookingState)); }
-      catch (err) { console.warn("Error saving booking state:", err); }
+
+
+      // Only persist if there is an active transaction
+      if (!hasActiveTransaction) {
+        return;
+      }
+
+      try {
+        await AsyncStorage.setItem("phomeBookingState", JSON.stringify(bookingState));
+      } catch (err) {
+        console.warn("Error saving booking state:", err);
+      }
     };
+
     saveBookingState();
-  }, [destination, destinationLabel, notes, paymentMethod, fare, matchedDriver, bookingConfirmed, bookingId, showBookingForm, searching]);
+  }, [
+    destination,
+    destinationLabel,
+    notes,
+    paymentMethod,
+    fare,
+    matchedDriver,
+    bookingConfirmed,
+    bookingId,
+    showBookingForm,
+    searching,
+    pickup,
+    pickupName,
+    dropoffName,
+    bookingType,
+    partySize,
+  ]);
 
   useEffect(() => {
     const loadBookingState = async () => {
+
       try {
         const savedState = await AsyncStorage.getItem("phomeBookingState");
-        if (savedState) {
-          const s = JSON.parse(savedState);
-          if (s.destination) setDestination(s.destination);
-          if (s.destinationLabel) setDestinationLabel(s.destinationLabel);
-          if (s.notes) setNotes(s.notes);
-          if (s.paymentMethod) setPaymentMethod(s.paymentMethod);
-          if (s.fare) setFare(s.fare);
-          if (s.matchedDriver) setMatchedDriver(s.matchedDriver);
-          if (s.bookingConfirmed) setBookingConfirmed(s.bookingConfirmed);
-          if (s.bookingId) setBookingId(s.bookingId);
-          if (s.showBookingForm) setShowBookingForm(s.showBookingForm);
-          if (s.searching) setSearching(s.searching);
-        }
-      } catch (err) { console.warn("Error loading booking state:", err); }
-    };
-    loadBookingState();
-  }, []);
 
+        if (!savedState) {
+          return;
+        }
+
+        const s = JSON.parse(savedState);
+
+        if (s.destinationLabel) setDestinationLabel(s.destinationLabel);
+        if (s.notes) setNotes(s.notes);
+        if (s.paymentMethod) setPaymentMethod(s.paymentMethod);
+        if (s.pickupName) setPickupName(s.pickupName);
+        if (s.dropoffName) setDropoffName(s.dropoffName);
+        if (s.bookingType) setBookingType(s.bookingType);
+        if (s.partySize) setPartySize(s.partySize);
+        if (s.pickup) setPickup(s.pickup);
+        if (s.destination) setDestination(s.destination);
+        if (s.showBookingForm) setShowBookingForm(false);
+
+        const savedBookingId = s.bookingId;
+
+        if (!savedBookingId) {
+          await restoreLatestBookingForPassenger();
+          return;
+        }
+
+        await restoreBookingFromServer(savedBookingId);
+      } catch (err) {
+        console.warn("Error loading booking state:", err);
+      }
+    };
+
+    loadBookingState();
+  }, [mapReady, passengerId]);
 
   const cancelRideNow = async () => {
     try {
@@ -1782,15 +2125,19 @@ export default function PHome() {
       setTripCompleted(false);
       setAlertedBookingComplete(false);
       setShowBookingForm(false);
+      setDropoffName("");
+      setQuery("");
+      setHits([]);
+      setCurrentBooking(null);
+      setPaymentInfo(null);
 
       // Clear map + cached state
       sendToMap({ type: "setMarkers", destination: null, driver: null });
       sendToMap({ type: "clearRoute" });
       sendToMap({ type: 'clearPickup' });
       await AsyncStorage.removeItem("phomeBookingState");
-      setFare(0);
+      resetFareBreakdown();
     } catch (e) {
-      console.log("[PHOME] cancel error", e);
       Alert.alert("Cancel error", "Could not cancel ride. Check your connection and try again.");
     }
   };
@@ -1937,6 +2284,7 @@ export default function PHome() {
                     setHits([]);
                     setDestination(null);
                     setDropoffName("");
+                    resetFareBreakdown();
                     sendToMap({ type: "clearRoute" });
                     sendToMap({ type: "setMarkers", destination: null, driver: null });
                   }}
@@ -2081,7 +2429,7 @@ export default function PHome() {
 
                     setDestination(null);
                     setDropoffName("");
-                    setFare(0);
+                    resetFareBreakdown();
 
                     lastRouteDestKeyRef.current = null;
                     lastRouteFromRef.current = null;
@@ -2124,15 +2472,78 @@ export default function PHome() {
             <View style={styles.overlay}>
 
               {searching && (
-                <View style={{ backgroundColor: "#fff3cd", padding: 10, marginTop: 10, borderRadius: 8 }}>
-                  <Text style={{ fontWeight: "bold" }}>
-                    🔍 Finding a driver... {bookingType === 'GROUP' ? `Group (${partySize})` : bookingType === 'SOLO' ? 'Solo (VIP)' : 'Classic'}
-                  </Text>
+                <View
+                  style={{
+                    backgroundColor: "#ffffff",
+                    padding: 12,
+                    marginTop: -10,
+                    margin: 10,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: "#e3e3e3",
+                    zIndex: 9999,
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <View>
+                      <Text style={{ fontWeight: "bold", fontSize: 15, color: "#061e1f" }}>
+                        Finding a driver
+                      </Text>
+                      <Text style={{ marginTop: 4, color: "#6b7280" }}>
+                        {bookingType === "GROUP"
+                          ? `Booking type: Group (${partySize})`
+                          : bookingType === "SOLO"
+                          ? "Booking type: Solo (VIP)"
+                          : "Booking type: Classic"}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Animated.View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          backgroundColor: "#061e1f",
+                          marginHorizontal: 3,
+                          opacity: dot1,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          backgroundColor: "#061e1f",
+                          marginHorizontal: 3,
+                          opacity: dot2,
+                        }}
+                      />
+                      <Animated.View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          backgroundColor: "#061e1f",
+                          marginHorizontal: 3,
+                          opacity: dot3,
+                        }}
+                      />
+                    </View>
+                  </View>
+
                   <TouchableOpacity
                     onPress={cancelRideNow}
-                    style={{ backgroundColor: "#f44336", padding: 10, marginTop: 10, borderRadius: 5 }}
+                    style={{
+                      backgroundColor: "#910d04",
+                      padding: 10,
+                      marginTop: 12,
+                      borderRadius: 8,
+                    }}
                   >
-                    <Text style={{ color: "white", textAlign: "center" }}>CANCEL BOOKING</Text>
+                    <Text style={{ color: "white", textAlign: "center", fontWeight: "bold" }}>
+                      CANCEL BOOKING
+                    </Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -2142,14 +2553,15 @@ export default function PHome() {
                 <View
                   style={{
                     position: "absolute",
-                    bottom: -100,
+                    bottom: -110,
                     left: 0,
                     right: 0,
-                    marginHorizontal: 20,
-                    backgroundColor: "#d1fcd3",
+                    marginHorizontal: 10,
+                    backgroundColor: "#f3f3f3",
                     borderRadius: 10,
                     padding: 10,
                     elevation: 3,
+                    zIndex: 9999,
                   }}
                   onLayout={(e) => {
                     const h = e.nativeEvent.layout.height;
@@ -2175,7 +2587,7 @@ export default function PHome() {
                       </View>
 
                       <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10, gap: 10 }}>
-                        <TouchableOpacity onPress={() => setInfoBoxMinimized(true)} style={{ backgroundColor: "#81C3E1", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
+                        <TouchableOpacity onPress={() => setInfoBoxMinimized(true)} style={{ backgroundColor: "#3f7e9b", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
                           <Text style={{ color: "white" }}>Minimize</Text>
                         </TouchableOpacity>
 
@@ -2191,12 +2603,12 @@ export default function PHome() {
                                 },
                               });
                             }}
-                            style={{ backgroundColor: "#007bff", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}
+                            style={{ backgroundColor: "#0b4583", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}
                           >
                             <Text style={{ color: "#fff", fontWeight: "bold" }}>Chat</Text>
                           </TouchableOpacity>
 
-                        <TouchableOpacity onPress={() => setShowReportModal(true)} style={{ backgroundColor: "#f44336", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
+                        <TouchableOpacity onPress={() => setShowReportModal(true)} style={{ backgroundColor: "#89130b", flex: 1, alignItems: "center", borderRadius: 5, padding: 5 }}>
                           <Text style={{ color: "white" }}>Report</Text>
                         </TouchableOpacity>
 
@@ -2244,12 +2656,12 @@ export default function PHome() {
                             <TouchableOpacity onPress={handleCopy}>
                               <Text>
                                 Number:{' '}
-                                <Text style={{ fontWeight: '600' }}>
+                                <Text style={{ fontWeight: '600', color: "#4177cf"}}>
                                   {paymentInfo.driverPayment?.number}
                                 </Text>
                               </Text>
                               <Text style={{ fontSize: 12, color: copied ? '#81C3E1' : '#666' }}>
-                                {copied ? '✔ Copied to clipboard' : 'Tap to copy'}
+                                {copied ? '✔ Copied to clipboard' : 'Tap to copy the number'}
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -2269,7 +2681,7 @@ export default function PHome() {
                             </TouchableOpacity>
                           </View>
                           <TouchableOpacity onPress={downloadDriverGcashQr} activeOpacity={0.7}>
-                            <Text style={{ textDecorationLine: "underline" }}>
+                            <Text style={{ textDecorationLine: "underline" , color: "#4177cf" }}>
                               Download GCash QR
                             </Text>
                           </TouchableOpacity>
@@ -2395,6 +2807,7 @@ export default function PHome() {
                           setQuery("");
                           setHits([]);
                           setDestination(null);
+                          resetFareBreakdown();
                           sendToMap({ type: "clearRoute" });
                           sendToMap({ type: "setMarkers", destination: null, driver: null });
                         }}
@@ -2498,7 +2911,7 @@ export default function PHome() {
                     <Text>
                       Additional Fare: ₱{additionalFare.toFixed(2)}
                     </Text>
-                    <Text style={{ marginTop: 4 }}>
+                    <Text style={{ marginTop: 4, fontWeight: "bold", fontSize: 15 }}>
                       Total Fare: ₱{totalFare.toFixed(2)}
                     </Text>
                   </View>
@@ -2617,8 +3030,20 @@ export default function PHome() {
                     <Text>• 20% discount for Senior Citizens, PWDs, Students</Text>
                     <Text>• Applies per trip (regardless of passenger count)</Text>
 
+                    <Text style={{ marginTop: 10, fontSize: 12, color: "#444", lineHeight: 16 }}>
+                      The fare information shown above follows the official Tricycle Fare Matrix 
+                      issued by the Tricycle Franchising & Regulatory Office (TFRO) of Lucena City. 
+                      This matrix is implemented to ensure fair and standardized fares for both 
+                      passengers and drivers.
+                    </Text>
                     <Text style={{ marginTop: 10, fontSize: 12, color: "#444" }}>
-                      Note: This is hardcoded for now. Later we’ll fetch these values from your fare matrix DB so updates reflect automatically.
+                      Please note that fare policies may be updated by TFRO in accordance with 
+                      new regulations approved by the local government.
+                    </Text>
+                    <Text style={{ marginTop: 10, fontSize: 12, color: "#444" }}>
+                      If a driver charges more than the authorized fare, you may report the 
+                      incident using the reporting feature in this app or directly through the 
+                      TFRO office for proper investigation and action.
                     </Text>
                   </View>
                 </TouchableWithoutFeedback>

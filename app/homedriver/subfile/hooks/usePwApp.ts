@@ -45,6 +45,34 @@ export function usePwApp(driverId: string, enabled: boolean) {
     [driverId, fetchActive]
   );
 
+  const quoteDropoff = useCallback(async (pwAppId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/pwapp/${pwAppId}/quote-dropoff`);
+      const json = await res.json();
+      return { ok: res.ok, data: json };
+    } catch {
+      return { ok: false };
+    }
+  }, []);
+
+  const cancelPassenger = useCallback(
+    async (pwAppId: string) => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/pwapp/${pwAppId}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const json = await res.json();
+        await fetchActive();
+        return { ok: res.ok, data: json };
+      } catch {
+        return { ok: false };
+      }
+    },
+    [fetchActive]
+  );
+
   const dropoff = useCallback(
     async (pwAppId: string) => {
       try {
@@ -74,5 +102,5 @@ export function usePwApp(driverId: string, enabled: boolean) {
     };
   }, [enabled, driverId, fetchActive]);
 
-  return { list, refresh: fetchActive, addPassenger, dropoff };
+  return { list, refresh: fetchActive, addPassenger, dropoff, quoteDropoff, cancelPassenger };
 }

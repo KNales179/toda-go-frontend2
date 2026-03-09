@@ -3,51 +3,37 @@ import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 
 type Props = {
+  // still used to show status text (optional)
   isPickedUp: boolean;
   onChat: () => void;
-  onPickedUp: () => void;
-  onDropOff: () => void;
   onMinimize: () => void;
 };
 
-export default function WorkflowCard({
-  isPickedUp,
-  onChat,
-  onPickedUp,
-  onDropOff,
-  onMinimize,
-}: Props) {
+export default function WorkflowCard({ isPickedUp, onChat, onMinimize }: Props) {
   return (
     <View style={styles.popup}>
-      <Text style={{ fontWeight: "bold", color: "#4caf50" }}>
-        ✅ Booking Confirmed!
-      </Text>
+      <Text style={styles.title}>✅ Booking Confirmed!</Text>
 
       {!isPickedUp ? (
-        <>
-          <Text>🕒 Waiting for pickup...</Text>
-          <TouchableOpacity style={styles.chatButton} onPress={onChat}>
-            <Text style={styles.chatText}>💬 Chat</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={onPickedUp}>
-            <Text style={styles.actionText}>🚕 Picked Up</Text>
-          </TouchableOpacity>
-        </>
+        <Text style={styles.sub}>🕒 Waiting for pickup…</Text>
       ) : (
-        <>
-          <Text>🟢 Passenger picked up! Ready for drop-off.</Text>
-          <TouchableOpacity style={styles.chatButton} onPress={onChat}>
-            <Text style={styles.chatText}>💬 Chat</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.dropButton} onPress={onDropOff}>
-            <Text style={styles.actionText}>📦 Drop Off</Text>
-          </TouchableOpacity>
-        </>
+        <Text style={styles.sub}>🟢 Passenger picked up! Proceed to drop-off.</Text>
       )}
 
-      <TouchableOpacity onPress={onMinimize}>
-        <Text style={styles.minButton}>Minimize</Text>
-      </TouchableOpacity>
+      <View style={styles.row}>
+        <TouchableOpacity style={styles.chatButton} onPress={onChat}>
+          <Text style={styles.chatText}>💬 Chat</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.minBtn} onPress={onMinimize}>
+          <Text style={styles.minText}>Minimize</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.hint}>
+        Use the <Text style={{ fontWeight: "900" }}>Done</Text> button in the{" "}
+        <Text style={{ fontWeight: "900" }}>Tasks</Text> list to mark Picked Up / Drop Off.
+      </Text>
     </View>
   );
 }
@@ -58,40 +44,32 @@ const styles = StyleSheet.create({
     bottom: 10,
     left: 20,
     right: 20,
-    padding: 15,
+    padding: 14,
     backgroundColor: "#fff",
-    borderRadius: 10,
+    borderRadius: 12,
     elevation: 5,
     zIndex: 99,
   },
+  title: { fontWeight: "900", color: "#16a34a", marginBottom: 6 },
+  sub: { color: "#111827" },
+
+  row: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+
   chatButton: {
-    marginTop: 8,
     backgroundColor: "#007bff",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignSelf: "flex-start",
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
   },
-  chatText: { color: "#fff", fontWeight: "bold" },
-  actionButton: {
-    backgroundColor: "#4caf50",
-    padding: 10,
-    marginTop: 10,
-    borderRadius: 5,
+  chatText: { color: "#fff", fontWeight: "900" },
+
+  minBtn: {
+    backgroundColor: "#111827",
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
   },
-  dropButton: {
-    backgroundColor: "#2196f3",
-    padding: 10,
-    marginTop: 10,
-    borderRadius: 5,
-  },
-  actionText: { color: "white", textAlign: "center" },
-  minButton: {
-    marginTop: 10,
-    padding: 5,
-    backgroundColor: "#81C3E1",
-    color: "white",
-    borderRadius: 5,
-    textAlign: "center",
-  },
+  minText: { color: "#fff", fontWeight: "900" },
+
+  hint: { marginTop: 10, fontSize: 12, color: "#6b7280" },
 });
