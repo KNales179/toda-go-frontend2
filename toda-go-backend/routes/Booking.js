@@ -2,7 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const fetch = require("node-fetch");
-
+const requireUserAuth = require("../middleware/requireUserAuth");
 const mongoose = require("mongoose");
 const DriverStatus = require("../models/DriverStatus");
 const Passenger = require("../models/Passenger");
@@ -941,7 +941,7 @@ async function todaAwareFilterForDriver(candidates, driverId) {
 
 
 // ---------- POST /book ----------
-router.post("/book", async (req, res) => {
+router.post("/book", requireUserAuth, async (req, res) => {
   try {
     const {
       pickupLat,
@@ -951,7 +951,6 @@ router.post("/book", async (req, res) => {
       fare,
       paymentMethod,
       notes,
-      passengerId,
       pickupPlace,
       destinationPlace,
       bookingType = "CLASSIC",
@@ -961,6 +960,12 @@ router.post("/book", async (req, res) => {
       riderPhone,     
       chosenRoute,
     } = req.body;
+
+    if (req.user.role !== "passenger") {
+      return res.status(403).json({ message: "Passengers only" });
+    }
+
+    const passengerId = req.user.sub;
 
     const paymentStatus =
       String(paymentMethod || "").toLowerCase() === "gcash" ? "awaiting" : "none";
@@ -972,9 +977,6 @@ router.post("/book", async (req, res) => {
       )
     ) {
       return res.status(400).json({ message: "Invalid coordinates" });
-    }
-    if (!passengerId) {
-      return res.status(400).json({ message: "passengerId required" });
     }
 
     const bookedForBool =
@@ -1080,9 +1082,15 @@ router.post("/book", async (req, res) => {
 // ===============================
 //   /api/waiting-bookings (AI v1 + TODA restriction)
 // ===============================
-router.get("/waiting-bookings", async (req, res) => {
+router.get("/waiting-bookings", requireUserAuth, async (req, res) => {
   try {
-    const { lat, lng, radiusKm = 5, limit = 10, driverId, ai } = req.query;
+    const { lat, lng, radiusKm = 5, limit = 10, ai } = req.query;
+
+    if (req.user.role !== "driver") {
+      return res.status(403).json({ message: "Drivers only" });
+    }
+
+    const driverId = req.user.sub;
 
     const center = {
       lat: Number(lat),
@@ -1308,9 +1316,12 @@ router.get("/waiting-bookings", async (req, res) => {
 });
 
 // ---------- GET /driver-requests/:driverId ----------
-router.get("/driver-requests/:driverId", async (req, res) => {
+router.get("/driver-requests/:driverId", requireUserAuth, async (req, res) => {
   try {
     const { driverId } = req.params;
+    if (req.user.role !== "driver" || req.user.sub !== driverId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
     if (!driverId) {
       return res.status(400).json({ error: "driverId is required" });
     }
@@ -1386,12 +1397,18 @@ router.post("/driver-confirmed", async (req, res) => {
 });
 
 // ---------- POST /accept-booking ----------
-router.post("/accept-booking", async (req, res) => {
+router.post("/accept-booking", requireUserAuth, async (req, res) => {
   try {
-    const { bookingId, driverId, driverLat, driverLng } = req.body;
+    const { bookingId, driverLat, driverLng } = req.body;
 
-    if (!bookingId || !driverId) {
-      return res.status(400).json({ message: "bookingId and driverId are required" });
+    if (req.user.role !== "driver") {
+      return res.status(403).json({ message: "Drivers only" });
+    }
+
+    const driverId = req.user.sub;
+
+    if (!bookingId) {
+      return res.status(400).json({ message: "bookingId is required" });
     }
 
     // Load booking (must be pending)
@@ -1548,7 +1565,7 @@ router.post("/accept-booking", async (req, res) => {
 // ---------- POST /cancel-booking ----------
 router.post("/cancel-booking", async (req, res) => {
   try {
-    const { bookingId, cancelledBy, driverLat, driverLng } = req.body; // "driver" | "passenger" | "system"
+    const { bookingId, cancelledBy, driverLat, driverLng } = req.body;
 
     if (!bookingId) {
       return res.status(400).json({ message: "bookingId required" });
@@ -1639,16 +1656,25 @@ router.post("/cancel-booking", async (req, res) => {
 });
 
 // ---------- POST /complete-booking ----------
-router.post("/complete-booking", async (req, res) => {
+router.post("/complete-booking", requireUserAuth, async (req, res) => {
   try {
-    const { bookingId, driverLat, driverLng } = req.body;
+    if (req.user.role !== "driver") {
+      return res.status(403).json({ message: "Drivers only" });
+    }
+
+    const authDriverId = String(req.user.sub || "");
 
     if (!bookingId) {
       return res.status(400).json({ message: "bookingId required" });
     }
 
     const b = await Booking.findOne({ bookingId }).lean();
+
     if (!b) return res.status(404).json({ message: "Booking not found" });
+
+    if (String(b.driverId || "") !== authDriverId) {
+      return res.status(403).json({ message: "Not your booking" });
+    }
 
     // If accepted/enroute and has a driver, release seats
     if ((b.status === "accepted" || b.status === "enroute") && b.driverId) {
@@ -1796,9 +1822,10 @@ router.post("/passenger/push-token", async (req, res) => {
   }
 });
 
-router.post("/driver/push-token", async (req, res) => {
+router.post("/driver/push-token", requireUserAuth, async (req, res) => {
   try {
-    const { driverId, pushToken } = req.body;
+    const { pushToken } = req.body;
+    const driverId = String(req.user.sub || "");
     if (!driverId || !pushToken) {
       return res.status(400).json({ error: "Missing driverId or pushToken" });
     }
@@ -1844,7 +1871,10 @@ router.get("/booking/:bookingId/payment-info", async (req, res) => {
   }
 });
 
-router.post("/booking/:bookingId/payment-status", async (req, res) => {
+router.post("/booking/:bookingId/payment-status", requireUserAuth, async (req, res) => {
+  if (!["driver", "passenger"].includes(req.user.role)) {
+    return res.status(403).json({ ok: false, error: "Forbidden" });
+  }
   try {
     const { status } = req.body; // "paid" | "failed"
     if (!["paid", "failed"].includes(String(status))) {

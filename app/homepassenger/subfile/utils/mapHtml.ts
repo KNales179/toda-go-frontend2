@@ -248,13 +248,13 @@ export function buildPassengerMapHtml({
           routeHitPolylines.push(hit);
         });
 
-        selectedRouteIdx = 0;
+        activeRouteIndex = 0;
         highlightRouteIndex(0);
       }
 
 
         function highlightRouteIndex(idx) {
-          selectedRouteIdx = idx;
+          activeRouteIndex = idx;
           routePolylines.forEach(function(poly, i) {
             const isMain = i === idx;
             poly.setStyle({

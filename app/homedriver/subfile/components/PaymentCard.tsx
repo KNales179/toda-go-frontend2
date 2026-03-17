@@ -38,14 +38,14 @@ export default function PaymentCard({
       <Text>Ask the passenger for payment and confirm here.</Text>
 
       <TouchableOpacity style={styles.chatButton} onPress={onChat}>
-        <Text style={styles.chatText}>💬 Chat</Text>
+        <Text style={styles.chatText}>Chat</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.confirmButton}
         onPress={onConfirmPayment}
       >
-        <Text style={styles.confirmText}>✅ Payment Confirmed</Text>
+        <Text style={styles.confirmText}>Payment Confirmed</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onMinimize}>

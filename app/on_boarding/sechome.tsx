@@ -78,7 +78,7 @@ export default function sechome() {
           <Image style={styles.pic} source={require('../../assets/images/pic2.png')} />
         </View>
         <Text style={[styles.made, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>Find TODA nearby</Text>
-        <Text style={[styles.hassle, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>San ka ba sasakay kasi</Text>
+        <Text style={[styles.hassle, { color: isDarkMode ? "#f2f2f2" : "#414141" }]}>Nag hahanap kaba ng masasakyan</Text>
         <View style={{ alignItems: "center", justifyContent: "center", flex: 1 }}>
           <Svg width={size} height={size} style={{ transform: [{ rotate: "-90deg" }] }}>
             {/* Background Circle */}

@@ -11,7 +11,7 @@ import PHome from "./phome";
 import PHistory from "./phistory";
 import PChats from "./pchats";
 import PProfile from "./pprofile";
-import Notifications from "./notifications"; // ✅ must exist at app/homepassenger/notifications.tsx
+import Notifications from "./notifications";
 
 import { AuthProvider } from "../utils/authContext";
 import { API_BASE_URL } from "../../config";
@@ -22,22 +22,95 @@ const Stack = createNativeStackNavigator();
 function PassengerTabs() {
   const [unseenCount, setUnseenCount] = useState(0);
 
+  console.log("AUTH:PASSENGER_TABS:render", {
+    unseenCount,
+  });
+
+  const getResolvedPassengerSession = useCallback(async () => {
+    const [rawPassengerId, rawToken, rawTodaAuth] = await Promise.all([
+      AsyncStorage.getItem("passengerId"),
+      AsyncStorage.getItem("token"),
+      AsyncStorage.getItem("toda.auth"),
+    ]);
+
+    let todaAuth: any = null;
+
+    try {
+      todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+    } catch (e) {
+      console.log("AUTH:PASSENGER_TABS:getResolvedPassengerSession:parse_failed", {
+        rawTodaAuth,
+      });
+    }
+
+    const passengerId =
+      rawPassengerId ||
+      todaAuth?.userId ||
+      todaAuth?.passengerId ||
+      null;
+
+    const token =
+      rawToken ||
+      todaAuth?.token ||
+      null;
+
+    console.log("AUTH:PASSENGER_TABS:getResolvedPassengerSession:resolved", {
+      rawPassengerId,
+      hasRawToken: !!rawToken,
+      hasTodaAuth: !!rawTodaAuth,
+      todaAuthUserId: todaAuth?.userId ?? null,
+      todaAuthPassengerId: todaAuth?.passengerId ?? null,
+      hasTodaAuthToken: !!todaAuth?.token,
+      passengerId,
+      hasToken: !!token,
+    });
+
+    return { passengerId, token };
+  }, []);
+
   const fetchUnseenCount = useCallback(async () => {
     try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      const token = await AsyncStorage.getItem("token");
+      const { passengerId, token } = await getResolvedPassengerSession();
 
-      if (!passengerId || !token) {
+      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:start", {
+        passengerId,
+        hasToken: !!token,
+      });
+
+      if (
+        !passengerId ||
+        passengerId === "undefined" ||
+        passengerId === "null" ||
+        !token
+      ) {
+        console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:missing_session", {
+          passengerId,
+          hasToken: !!token,
+        });
         setUnseenCount(0);
         return;
       }
 
-      const url = `${API_BASE_URL}/api/notifications?userType=passenger&userId=${encodeURIComponent(
-        passengerId
-      )}`;
+      const url =
+        `${API_BASE_URL}/api/notifications` +
+        `?userType=passenger&userId=${encodeURIComponent(passengerId)}`;
+
+      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:url", { url });
 
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const rawText = await res.text();
+
+      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:response", {
+        ok: res.ok,
+        status: res.status,
+        rawText,
       });
 
       if (!res.ok) {
@@ -45,28 +118,44 @@ function PassengerTabs() {
         return;
       }
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch (e) {
+        console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:json_parse_failed", {
+          rawText,
+        });
+        setUnseenCount(0);
+        return;
+      }
+
       const list = Array.isArray(data?.items) ? data.items : [];
       const unseen = list.filter((n: any) => !n.seenAt).length;
 
+      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:parsed", {
+        total: list.length,
+        unseen,
+      });
+
       setUnseenCount(unseen);
-    } catch (e) {
+    } catch (e: any) {
+      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:error", {
+        message: e?.message || String(e),
+      });
       setUnseenCount(0);
     }
-  }, []);
+  }, [getResolvedPassengerSession]);
 
-  // refresh when this tab navigator becomes active
   useFocusEffect(
     React.useCallback(() => {
       fetchUnseenCount();
     }, [fetchUnseenCount])
   );
 
-  // optional: keep it updated while user stays in passenger area
   useEffect(() => {
     const id = setInterval(() => {
       fetchUnseenCount();
-    }, 10000); // every 10 seconds
+    }, 10000);
 
     return () => clearInterval(id);
   }, [fetchUnseenCount]);
@@ -83,7 +172,6 @@ function PassengerTabs() {
           else if (route.name === "pchats") iconName = "chatbubbles";
           else iconName = "person";
 
-          // ✅ Add red dot ONLY on Profile tab icon
           if (route.name === "pprofile") {
             return (
               <View style={{ position: "relative" }}>
@@ -132,19 +220,16 @@ function PassengerTabs() {
 }
 
 export default function PassengerStackLayout() {
-  console.log("AUTH:N1:homepassenger:layout:render");
+  console.log("AUTH:PASSENGER_LAYOUT:render");
 
   return (
     <AuthProvider>
       <Stack.Navigator>
-        {/* Tabs as the main screen */}
         <Stack.Screen
           name="PassengerTabs"
           component={PassengerTabs}
           options={{ headerShown: false }}
         />
-
-        {/* ✅ Extra pages that are NOT tabs */}
         <Stack.Screen
           name="notifications"
           component={Notifications}

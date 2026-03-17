@@ -196,9 +196,6 @@ function DriverTabs() {
     >
       <Tab.Screen name="dhome" component={DHome} options={{ title: "Home" }} />
       <Tab.Screen name="dhistory" component={DHistory} options={{ title: "History" }} />
-      <Tab.Screen name="dchats" component={DChats} options={{ title: "Chats" }} />
-
-      {/* ✅ Only show if president */}
       {isPresident && (
         <Tab.Screen
           name="dpresident"
@@ -208,7 +205,7 @@ function DriverTabs() {
           }}
         />
       )}
-
+      <Tab.Screen name="dchats" component={DChats} options={{ title: "Chats" }} />
       <Tab.Screen name="dprofile" component={DProfile} options={{ title: "Profile" }} />
     </Tab.Navigator>
   );

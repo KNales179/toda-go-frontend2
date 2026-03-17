@@ -1,18 +1,27 @@
 import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, Dimensions, TouchableOpacity, Image, Alert,
-  Platform, ActionSheetIOS, StatusBar, Modal, TextInput, ActivityIndicator
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  TouchableOpacity,
+  Image,
+  Alert,
+  Platform,
+  ActionSheetIOS,
+  StatusBar,
+  Modal,
+  TextInput,
+  ActivityIndicator,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { ImagePickerAsset } from "expo-image-picker";
 import { API_BASE_URL } from "../../config";
-import { useFocusEffect } from "@react-navigation/native";
-import { MaterialIcons } from "@expo/vector-icons";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useNavigation } from "@react-navigation/native";
 
 const { width } = Dimensions.get("window");
 
@@ -52,9 +61,30 @@ export default function PProfile() {
   const [idFront, setIdFront] = useState<ImagePickerAsset | null>(null);
   const [idBack, setIdBack] = useState<ImagePickerAsset | null>(null);
   const [submittingDiscount, setSubmittingDiscount] = useState(false);
+
   const [unseenCount, setUnseenCount] = useState(0);
   const [notifLoading, setNotifLoading] = useState(false);
 
+  const getSession = async () => {
+    const [passengerId, token] = await Promise.all([
+      AsyncStorage.getItem("passengerId"),
+      AsyncStorage.getItem("token"),
+    ]);
+
+    return {
+      passengerId,
+      token,
+    };
+  };
+
+  const authHeaders = (token: string) => ({
+    Authorization: `Bearer ${token}`,
+  });
+
+  const jsonHeaders = (token: string) => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  });
 
   const dv = profile?.discountVerification || null;
   const discountStatus: "none" | "pending" | "approved" | "rejected" =
@@ -82,11 +112,7 @@ export default function PProfile() {
 
   const canOpenDiscountModal = discountStatus === "none" || discountStatus === "rejected";
 
-  const DEBUG_DISCOUNT = true;
-
-
   const onPressDiscount = () => {
-
     if (!canOpenDiscountModal) {
       Alert.alert(
         "Discount",
@@ -99,17 +125,18 @@ export default function PProfile() {
     setDiscountOpen(true);
   };
 
-
-
   const resendPassengerEmail = async () => {
     if (!profile?.email) return Alert.alert("Error", "No email on file.");
+
     try {
       setEmailSending(true);
+
       const r = await fetch(`${API_BASE_URL}/api/auth/passenger/resend-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: profile.email }),
       });
+
       const j = await r.json();
       if (r.ok) Alert.alert("Sent", j.message || "Verification email sent.");
       else Alert.alert("Error", j.message || j.error || "Failed to send email.");
@@ -122,14 +149,23 @@ export default function PProfile() {
 
   const fetchProfile = async () => {
     try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) return;
+      const { passengerId, token } = await getSession();
 
+      if (!passengerId || !token) {
+        setProfile(null);
+        return;
+      }
 
-      const response = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`);
-      const result = await response.json();
+      const response = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
+        headers: authHeaders(token),
+      });
 
-      const apiStatus = result?.passenger?.discountVerification?.status;
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        console.error("❌ fetchProfile failed:", response.status, result);
+        return;
+      }
 
       if (result?.passenger) {
         setProfile(result.passenger);
@@ -139,7 +175,6 @@ export default function PProfile() {
     }
   };
 
-
   useFocusEffect(
     React.useCallback(() => {
       fetchProfile();
@@ -147,31 +182,52 @@ export default function PProfile() {
     }, [])
   );
 
-
   const pickSelfieImage = async () => {
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         { options: ["Take a Photo", "Choose from Gallery", "Cancel"], cancelButtonIndex: 2 },
         async (i) => {
           if (i === 0) {
-            const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 1 });
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              quality: 1,
+            });
             if (!result.canceled && result.assets.length > 0) setProfileImage(result.assets[0]);
           } else if (i === 1) {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 1 });
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              quality: 1,
+            });
             if (!result.canceled && result.assets.length > 0) setProfileImage(result.assets[0]);
           }
         }
       );
     } else {
       Alert.alert("Select Option", "", [
-        { text: "Take a Photo", onPress: async () => {
-            const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 1 });
+        {
+          text: "Take a Photo",
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              quality: 1,
+            });
             if (!result.canceled && result.assets.length > 0) setProfileImage(result.assets[0]);
-          }},
-        { text: "Choose from Gallery", onPress: async () => {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 1 });
+          },
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              quality: 1,
+            });
             if (!result.canceled && result.assets.length > 0) setProfileImage(result.assets[0]);
-          }},
+          },
+        },
         { text: "Cancel", style: "cancel" },
       ]);
     }
@@ -179,9 +235,14 @@ export default function PProfile() {
 
   const handleUploadSelfie = async () => {
     if (!profileImage) return Alert.alert("Error", "Please select an image first.");
+
     try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) return;
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+        return;
+      }
 
       const formData = new FormData();
       formData.append("profileImage", {
@@ -190,13 +251,13 @@ export default function PProfile() {
         type: (profileImage as any).mimeType || "image/jpeg",
       } as any);
 
-      const res = await fetch(`${API_BASE_URL}/api/auth/passenger/${passengerId}/photo`, {
+      const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}/photo`, {
         method: "POST",
+        headers: authHeaders(token),
         body: formData,
       });
 
-
-      const j = await res.json();
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to upload image");
 
       setProfile(j.passenger);
@@ -215,21 +276,23 @@ export default function PProfile() {
 
   const saveEdit = async () => {
     if (!editField) return;
+
     try {
       setEditSaving(true);
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) throw new Error("Missing passengerId");
+
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) throw new Error("Missing session");
 
       const payload: Record<string, any> = {};
       payload[editField.key] = editField.value;
 
       const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(token),
         body: JSON.stringify(payload),
       });
 
-      const j = await res.json();
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to update");
 
       setProfile(j.passenger);
@@ -252,6 +315,7 @@ export default function PProfile() {
     if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
     return age < 0 ? null : age;
   };
+
   const fmtDate = (iso?: string) => {
     if (!iso) return null;
     const d = new Date(iso);
@@ -265,22 +329,27 @@ export default function PProfile() {
     setLastNameEdit(profile?.lastName || "");
     setNameOpen(true);
   };
+
   const saveName = async () => {
     try {
       setSavingName(true);
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) throw new Error("No passengerId");
+
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) throw new Error("Missing session");
+
       const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(token),
         body: JSON.stringify({
           firstName: firstNameEdit.trim(),
           middleName: middleNameEdit.trim(),
           lastName: lastNameEdit.trim(),
         }),
       });
-      const j = await res.json();
+
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to update name");
+
       setProfile(j.passenger);
       setNameOpen(false);
     } catch (e: any) {
@@ -293,6 +362,7 @@ export default function PProfile() {
   const openGender = () => {
     const current = profile?.gender || "";
     const known = ["Male", "Female", "Nonbinary", "Prefer not to say"];
+
     if (known.includes(current)) {
       setGenderChoice(current);
       setGenderOther("");
@@ -303,25 +373,33 @@ export default function PProfile() {
       setGenderChoice("");
       setGenderOther("");
     }
+
     setGenderOpen(true);
   };
+
   const saveGender = async () => {
     const value = genderChoice === "Other" ? genderOther.trim() : genderChoice;
+
     if (!value) return Alert.alert("Gender", "Please choose an option.");
     if (genderChoice === "Other" && !genderOther.trim()) {
       return Alert.alert("Gender", "Please enter a custom gender.");
     }
+
     try {
       setSavingGender(true);
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) throw new Error("No passengerId");
+
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) throw new Error("Missing session");
+
       const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(token),
         body: JSON.stringify({ gender: value }),
       });
-      const j = await res.json();
+
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to update gender");
+
       setProfile(j.passenger);
       setGenderOpen(false);
     } catch (e: any) {
@@ -341,21 +419,27 @@ export default function PProfile() {
 
   const saveBday = async () => {
     if (!bdayValue) return;
+
     const yyyy = bdayValue.getFullYear();
     const mm = String(bdayValue.getMonth() + 1).padStart(2, "0");
     const dd = String(bdayValue.getDate()).padStart(2, "0");
     const iso = `${yyyy}-${mm}-${dd}`;
+
     try {
       setSavingBday(true);
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) throw new Error("No passengerId");
+
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) throw new Error("Missing session");
+
       const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(token),
         body: JSON.stringify({ birthday: iso }),
       });
-      const j = await res.json();
+
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to update birthday");
+
       setProfile(j.passenger);
       setBdayOpen(false);
     } catch (e: any) {
@@ -370,20 +454,29 @@ export default function PProfile() {
     setEcPhone(profile?.eContactPhone || "");
     setEcOpen(true);
   };
+
   const saveEc = async () => {
     if (!ecName.trim()) return Alert.alert("Emergency Contact", "Please enter a name.");
     if (!ecPhone.trim()) return Alert.alert("Emergency Contact", "Please enter a phone number.");
+
     try {
       setSavingEc(true);
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) throw new Error("No passengerId");
+
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) throw new Error("Missing session");
+
       const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ eContactName: ecName.trim(), eContactPhone: ecPhone.trim() }),
+        headers: jsonHeaders(token),
+        body: JSON.stringify({
+          eContactName: ecName.trim(),
+          eContactPhone: ecPhone.trim(),
+        }),
       });
-      const j = await res.json();
+
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to update emergency contact");
+
       setProfile(j.passenger);
       setEcOpen(false);
     } catch (e: any) {
@@ -393,9 +486,7 @@ export default function PProfile() {
     }
   };
 
-  const pickDiscountImage = async (
-    setter: (img: ImagePickerAsset) => void
-  ) => {
+  const pickDiscountImage = async (setter: (img: ImagePickerAsset) => void) => {
     const openCamera = async () => {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -436,7 +527,6 @@ export default function PProfile() {
     }
   };
 
-
   const submitDiscountRequest = async () => {
     try {
       if (!discountType) {
@@ -451,8 +541,12 @@ export default function PProfile() {
         return Alert.alert("Discount", "Please upload the front of your ID.");
       }
 
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      if (!passengerId) return;
+      const { passengerId, token } = await getSession();
+      if (!passengerId || !token) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+        return;
+      }
 
       setSubmittingDiscount(true);
 
@@ -476,15 +570,13 @@ export default function PProfile() {
         } as any);
       }
 
-      const res = await fetch(
-        `${API_BASE_URL}/api/passenger/${passengerId}/discount/submit`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const res = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}/discount/submit`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: formData,
+      });
 
-      const j = await res.json();
+      const j = await res.json().catch(() => null);
       if (!res.ok) throw new Error(j?.message || "Failed to submit");
 
       Alert.alert("Submitted", "Please wait 1–3 business days for verification.");
@@ -494,7 +586,7 @@ export default function PProfile() {
       setIdFront(null);
       setIdBack(null);
 
-      fetchProfile(); // refresh profile to get status
+      fetchProfile();
     } catch (e: any) {
       Alert.alert("Error", e.message || "Submission failed");
     } finally {
@@ -502,13 +594,11 @@ export default function PProfile() {
     }
   };
 
-  // ✅ UPDATED: uses token and fails safe so badge logic works reliably
   const fetchUnseenCount = async () => {
     try {
       setNotifLoading(true);
 
-      const passengerId = await AsyncStorage.getItem("passengerId");
-      const token = await AsyncStorage.getItem("token");
+      const { passengerId, token } = await getSession();
 
       if (!passengerId || !token) {
         setUnseenCount(0);
@@ -531,8 +621,7 @@ export default function PProfile() {
         return;
       }
 
-      const data = await res.json();
-
+      const data = await res.json().catch(() => null);
       const list = Array.isArray(data?.items) ? data.items : [];
       const unseen = list.filter((n: any) => !n.seenAt).length;
       setUnseenCount(unseen);
@@ -543,13 +632,15 @@ export default function PProfile() {
     }
   };
 
-
-
-
   const handleLogout = async () => {
     try {
-      // remove all passenger-side auth keys
-      await AsyncStorage.multiRemove(["role", "userId", "passengerId", "token"]);
+      await AsyncStorage.multiRemove([
+        "role",
+        "userId",
+        "passengerId",
+        "token",
+        "toda.auth",
+      ]);
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("/login_and_reg/plogin");
     } catch (error) {
@@ -572,16 +663,22 @@ export default function PProfile() {
                 profileImage
                   ? { uri: profileImage.uri }
                   : profile?.profileImage
-                    ? { uri: `${profile.profileImage}?v=${encodeURIComponent(profile?.updatedAt || Date.now())}` }
-                    : require("../../assets/images/profile-placeholder.jpg")
+                  ? {
+                      uri: /^https?:\/\//i.test(profile.profileImage)
+                        ? `${profile.profileImage}${profile.profileImage.includes("?") ? "&" : "?"}v=${encodeURIComponent(profile?.updatedAt || Date.now())}`
+                        : `${API_BASE_URL.replace(/\/$/, "")}/${String(profile.profileImage).replace(/^\/+/, "")}?v=${encodeURIComponent(profile?.updatedAt || Date.now())}`,
+                    }
+                  : require("../../assets/images/profile-placeholder.jpg")
               }
               style={styles.profileImage}
             />
           </TouchableOpacity>
+
           <View>
             <Text style={styles.username}>
               {[profile?.firstName, profile?.lastName].filter(Boolean).join(" ")}
             </Text>
+
             {profileImage && (
               <TouchableOpacity style={styles.uploadButton} onPress={handleUploadSelfie}>
                 <Text style={{ color: "#fff", textAlign: "center" }}>Save Profile</Text>
@@ -594,7 +691,7 @@ export default function PProfile() {
           style={styles.row}
           onPress={() => {
             navigation.navigate("notifications");
-          }} 
+          }}
         >
           <View style={{ position: "relative" }}>
             <Ionicons name="notifications" size={25} color="black" />
@@ -615,7 +712,6 @@ export default function PProfile() {
             )}
           </View>
         </TouchableOpacity>
-
       </View>
 
       <View style={styles.accountContainer}>
@@ -627,7 +723,12 @@ export default function PProfile() {
             <Text
               style={[
                 styles.value,
-                { color: (profile?.firstName || profile?.middleName || profile?.lastName) ? "#000" : "#999" },
+                {
+                  color:
+                    profile?.firstName || profile?.middleName || profile?.lastName
+                      ? "#000"
+                      : "#999",
+                },
               ]}
             >
               {profile?.firstName || ""} {profile?.middleName || ""} {profile?.lastName || ""}
@@ -734,6 +835,7 @@ export default function PProfile() {
             </TouchableOpacity>
           </View>
         </View>
+
         <View style={styles.infoRow}>
           <Text style={styles.label}>Discount:</Text>
           <TouchableOpacity
@@ -754,6 +856,7 @@ export default function PProfile() {
             </Text>
           </TouchableOpacity>
         </View>
+
         <View style={styles.infoRow}>
           <Text style={styles.label}>Account:</Text>
           <TouchableOpacity
@@ -775,21 +878,28 @@ export default function PProfile() {
               Apply for Discount
             </Text>
 
-            {/* Discount Type */}
             {["Student", "Senior Citizen", "PWD"].map((opt) => (
               <TouchableOpacity key={opt} onPress={() => setDiscountType(opt as any)} style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
-                <View style={{
-                  width: 18, height: 18, borderRadius: 9,
-                  borderWidth: 2, borderColor: "#5089A3",
-                  alignItems: "center", justifyContent: "center", marginRight: 10
-                }}>
-                  {discountType === opt && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: "#5089A3" }} />}
+                <View
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    borderWidth: 2,
+                    borderColor: "#5089A3",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginRight: 10,
+                  }}
+                >
+                  {discountType === opt && (
+                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: "#5089A3" }} />
+                  )}
                 </View>
                 <Text>{opt}</Text>
               </TouchableOpacity>
             ))}
 
-            {/* School Year (Student only) */}
             {discountType === "Student" && (
               <TextInput
                 placeholder="School Year (e.g. 2025-2026)"
@@ -799,17 +909,13 @@ export default function PProfile() {
               />
             )}
 
-            {/* Upload buttons */}
-            <TouchableOpacity
-              onPress={() => pickDiscountImage(setIdFront)}
-              style={styles.uploadButton}
-            >
+            <TouchableOpacity onPress={() => pickDiscountImage(setIdFront)} style={styles.uploadButton}>
               <Text style={{ color: "#fff", textAlign: "center" }}>
                 {idFront ? "Change Front ID" : "Upload ID Front"}
               </Text>
             </TouchableOpacity>
 
-            { idFront && (
+            {idFront && (
               <Image
                 source={{ uri: idFront.uri }}
                 style={{
@@ -824,17 +930,13 @@ export default function PProfile() {
               />
             )}
 
-
-            <TouchableOpacity
-              onPress={() => pickDiscountImage(setIdBack)}
-              style={[styles.uploadButton, { marginTop: 8 }]}
-            >
+            <TouchableOpacity onPress={() => pickDiscountImage(setIdBack)} style={[styles.uploadButton, { marginTop: 8 }]}>
               <Text style={{ color: "#fff", textAlign: "center" }}>
                 {idBack ? "Change Back ID" : "Upload ID Back"}
               </Text>
             </TouchableOpacity>
 
-            { idBack && (
+            {idBack && (
               <Image
                 source={{ uri: idBack.uri }}
                 style={{
@@ -849,8 +951,6 @@ export default function PProfile() {
               />
             )}
 
-
-            {/* Actions */}
             <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 12 }}>
               <TouchableOpacity onPress={() => setDiscountOpen(false)} style={{ padding: 10, marginRight: 8 }}>
                 <Text>Cancel</Text>
@@ -867,9 +967,17 @@ export default function PProfile() {
         </View>
       </Modal>
 
-
-      {/* Edit field modal */}
-      <Modal transparent visible={editOpen} animationType="fade" onRequestClose={() => { if (!editSaving) { setEditOpen(false); setEditField(null); } }}>
+      <Modal
+        transparent
+        visible={editOpen}
+        animationType="fade"
+        onRequestClose={() => {
+          if (!editSaving) {
+            setEditOpen(false);
+            setEditField(null);
+          }
+        }}
+      >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
             <Text style={{ fontWeight: "bold", fontSize: 16, marginBottom: 8 }}>Edit {editField?.label}</Text>
@@ -882,10 +990,21 @@ export default function PProfile() {
               autoCapitalize="sentences"
             />
             <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 12 }}>
-              <TouchableOpacity disabled={editSaving} onPress={() => { setEditOpen(false); setEditField(null); }} style={{ paddingVertical: 10, paddingHorizontal: 14 }}>
+              <TouchableOpacity
+                disabled={editSaving}
+                onPress={() => {
+                  setEditOpen(false);
+                  setEditField(null);
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 14 }}
+              >
                 <Text>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity disabled={editSaving} onPress={saveEdit} style={{ backgroundColor: "#5089A3", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, minWidth: 90, alignItems: "center" }}>
+              <TouchableOpacity
+                disabled={editSaving}
+                onPress={saveEdit}
+                style={{ backgroundColor: "#5089A3", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, minWidth: 90, alignItems: "center" }}
+              >
                 {editSaving ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff" }}>Save</Text>}
               </TouchableOpacity>
             </View>
@@ -893,7 +1012,6 @@ export default function PProfile() {
         </View>
       </Modal>
 
-      {/* Name modal */}
       <Modal transparent visible={nameOpen} animationType="fade" onRequestClose={() => !savingName && setNameOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
@@ -913,7 +1031,6 @@ export default function PProfile() {
         </View>
       </Modal>
 
-      {/* Gender modal */}
       <Modal transparent visible={genderOpen} animationType="fade" onRequestClose={() => !savingGender && setGenderOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
@@ -941,7 +1058,6 @@ export default function PProfile() {
         </View>
       </Modal>
 
-      {/* Birthday modal (iOS) */}
       <Modal transparent visible={bdayOpen} animationType="fade" onRequestClose={() => !savingBday && setBdayOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
@@ -961,7 +1077,6 @@ export default function PProfile() {
         </View>
       </Modal>
 
-      {/* Android date picker */}
       {Platform.OS === "android" && showAndroidBday && (
         <DateTimePicker
           mode="date"
@@ -978,7 +1093,6 @@ export default function PProfile() {
         />
       )}
 
-      {/* Confirm birthday (Android) */}
       <Modal transparent visible={androidBdayConfirmOpen} animationType="fade" onRequestClose={() => !savingBday && setAndroidBdayConfirmOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>
@@ -1005,7 +1119,6 @@ export default function PProfile() {
         </View>
       </Modal>
 
-      {/* Emergency contact modal */}
       <Modal transparent visible={ecOpen} animationType="fade" onRequestClose={() => !savingEc && setEcOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 20 }}>
           <View style={{ width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 12, padding: 16 }}>

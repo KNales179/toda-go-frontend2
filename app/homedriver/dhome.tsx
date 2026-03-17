@@ -151,7 +151,7 @@ async function ensureLocationEnabled(): Promise<boolean> {
 }
 
 // ---- Driver push token helper ----
-async function registerDriverPushToken(driverId: string) {
+async function registerDriverPushToken(driverId: string, token: string) {
   try {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
@@ -178,7 +178,10 @@ async function registerDriverPushToken(driverId: string) {
 
     const res = await fetch(`${API_BASE_URL}/api/driver/push-token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({ driverId, pushToken }),
     });
 
@@ -201,6 +204,7 @@ export default function DHome() {
   const [mapHtml, setMapHtml] = useState("");
   const mapRef = useRef<WebViewType | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [livePos, setLivePos] = useState<{ latitude: number; longitude: number } | null>(null);
   const [incomingBooking, setIncomingBooking] = useState<any>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -301,27 +305,83 @@ export default function DHome() {
   const status = currentBooking?.status as "accepted" | "pending" | "completed" | "canceled" | undefined;
   const passengerId = currentBooking?.passengerId;
 
-  // ✅ driverId only from AsyncStorage
+  const getResolvedDriverSession = async () => {
+    const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+      AsyncStorage.getItem("driverId"),
+      AsyncStorage.getItem("token"),
+      AsyncStorage.getItem("toda.auth"),
+    ]);
+
+    let todaAuth: any = null;
+
+    try {
+      todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+    } catch (e) {
+      console.log("AUTH:DHOME:getResolvedDriverSession:parse_failed", {
+        rawTodaAuth,
+      });
+    }
+
+    const resolvedDriverId =
+      rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+
+    const resolvedToken =
+      rawToken || todaAuth?.token || null;
+
+    console.log("AUTH:DHOME:getResolvedDriverSession:resolved", {
+      rawDriverId,
+      hasRawToken: !!rawToken,
+      hasTodaAuth: !!rawTodaAuth,
+      todaAuthUserId: todaAuth?.userId ?? null,
+      todaAuthDriverId: todaAuth?.driverId ?? null,
+      hasTodaAuthToken: !!todaAuth?.token,
+      resolvedDriverId,
+      hasToken: !!resolvedToken,
+    });
+
+    return {
+      driverId:
+        resolvedDriverId &&
+        resolvedDriverId !== "undefined" &&
+        resolvedDriverId !== "null"
+          ? String(resolvedDriverId)
+          : null,
+      token:
+        resolvedToken &&
+        resolvedToken !== "undefined" &&
+        resolvedToken !== "null"
+          ? String(resolvedToken)
+          : null,
+    };
+  };
+
   useEffect(() => {
     const fetchDriver = async () => {
-      const legacyId = await AsyncStorage.getItem("driverId");
-      if (!legacyId) {
-        Alert.alert("Session expired", "Please log in again.");
-        router.replace("/login_and_reg/dlogin");
-        return;
+      try {
+        const session = await getResolvedDriverSession();
+
+        if (!session.driverId || !session.token) {
+          console.log("AUTH:DHOME:missing_session", session);
+          return; // don't instantly logout
+        }
+
+        setDriverId(session.driverId);
+        setToken(session.token);
+      } catch (e) {
+        console.log("AUTH:DHOME:session_error", e);
       }
-      setDriverId(String(legacyId));
     };
+
     fetchDriver();
   }, []);
 
   // push token register
   useEffect(() => {
-    if (!driverId) return;
+    if (!driverId || !token) return;
     if (hasRegisteredPushRef.current) return;
     hasRegisteredPushRef.current = true;
-    registerDriverPushToken(driverId);
-  }, [driverId]);
+    registerDriverPushToken(driverId, token);
+  }, [driverId, token]);
 
   // ✅ NEW: send pwApp pins to map whenever list changes
   useEffect(() => {
@@ -366,9 +426,14 @@ export default function DHome() {
 
   const setBookingPaymentStatus = async (bookingId: string, status: "paid" | "failed") => {
     try {
+      if (!token) return;
+
       await fetch(`${API_BASE_URL}/api/booking/${bookingId}/payment-status`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ status }),
       });
     } catch {}
@@ -448,7 +513,13 @@ export default function DHome() {
     const url = `${API_BASE_URL}/api/route?start=${from.lng},${from.lat}&end=${to.lng},${to.lat}`;
 
     try {
-      const res = await fetch(url);
+      if (!token) return null;
+
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       if (!res.ok) {
         const txt = await res.text();
@@ -491,17 +562,22 @@ export default function DHome() {
   useEffect(() => {
     (async () => {
       try {
-        const driverId = await AsyncStorage.getItem("driverId");
-        if (!driverId) return;
-        const r = await fetch(`${API_BASE_URL}/api/driver/${driverId}`);
-        const j = await r.json();
+        if (!driverId || !token) return;
+
+        const r = await fetch(`${API_BASE_URL}/api/driver/${driverId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const j = await r.json().catch(() => null);
         const cap = j?.driver?.capacity;
         setCapacity(typeof cap === "number" ? cap : null);
       } catch {
         setCapacity(null);
       }
     })();
-  }, [isOnline]);
+  }, [isOnline, driverId, token]);
 
   // on mount
   useEffect(() => {
@@ -625,8 +701,7 @@ export default function DHome() {
 
   const sendHeartbeat = async () => {
     try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId) return;
+      if (!driverId || !token) return;
 
       const center = driverLoc
         ? { lat: driverLoc.lat, lng: driverLoc.lng }
@@ -638,7 +713,10 @@ export default function DHome() {
 
       await fetch(`${API_BASE_URL}/api/driver-heartbeat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           driverId,
           location: { lat: center.lat, lng: center.lng },
@@ -652,7 +730,7 @@ export default function DHome() {
   };
 
   const updateDriverStatus = async (newStatus: boolean) => {
-    if (!driverId) return;
+    if (!driverId || !token) return;
 
     const center =
       driverLoc ??
@@ -661,7 +739,10 @@ export default function DHome() {
     try {
       await fetch(`${API_BASE_URL}/api/driver-status`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           driverId,
           isOnline: newStatus,
@@ -718,7 +799,12 @@ export default function DHome() {
 
     const fetchRequests = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/driver-requests/${driverId}`);
+        if (!token) return;
+        const res = await fetch(`${API_BASE_URL}/api/driver-requests/${driverId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         const raw = await safeJson(res, "GET /api/driver-requests");
         const data: any[] = Array.isArray(raw) ? raw : [];
 
@@ -807,16 +893,18 @@ export default function DHome() {
     try {
       if (!previewBooking?.id) return;
 
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId) {
-        Alert.alert("Error", "Missing driverId. Please re-login.");
+      if (!driverId || !token) {
+        Alert.alert("Error", "Missing session. Please re-login.");
         return;
       }
 
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingId: previewBooking.id, driverId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ bookingId: previewBooking.id }),
       });
 
       const result = await res.json();
@@ -833,7 +921,11 @@ export default function DHome() {
       let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
-          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
+          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
@@ -889,9 +981,8 @@ export default function DHome() {
   // acceptBooking from pending card
   const acceptBooking = async () => {
     try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      if (!driverId || !incomingBooking?.id) {
-        Alert.alert("Error", "Missing driverId or booking id.");
+      if (!driverId || !token || !incomingBooking?.id) {
+        Alert.alert("Error", "Missing session or booking id.");
         return;
       }
 
@@ -899,8 +990,11 @@ export default function DHome() {
 
       const res = await fetch(`${API_BASE_URL}/api/accept-booking`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookingId: incomingBooking.id, driverId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ bookingId: incomingBooking.id }),
       });
 
       const result = await res.json();
@@ -917,7 +1011,11 @@ export default function DHome() {
       let passengerProfile: any = null;
       if (booking.passengerId) {
         try {
-          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`);
+          const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${booking.passengerId}`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
           if (infoRes.ok) {
             const infoData = await infoRes.json();
             const p = infoData?.passenger;
@@ -941,6 +1039,7 @@ export default function DHome() {
         bookingType: booking.bookingType || "CLASSIC",
         partySize: booking.partySize || 1,
       };
+
       const jobId = String(booking.id);
 
       setIncomingBooking(booking);
@@ -953,6 +1052,10 @@ export default function DHome() {
         ...prev,
         [jobId]: prev[jobId] || { phase: "toPickup", pickedUp: false, paymentConfirm: false },
       }));
+
+
+      setPanelMode("tasks");
+      setMinimized(false);
 
       const check = validateBooking(booking);
       if (!check.valid) Alert.alert("Booking data issue", check.issues.join(", "));
@@ -981,7 +1084,13 @@ export default function DHome() {
             onPress: async () => {
               setIsOnline(false);
               updateDriverStatus(false);
-              await AsyncStorage.clear();
+              await AsyncStorage.multiRemove([
+                "role",
+                "userId",
+                "driverId",
+                "token",
+                "toda.auth",
+              ]);
               router.push("/login_and_reg/dlogin");
             },
           },
@@ -1005,6 +1114,16 @@ export default function DHome() {
     );
   }, [incomingBooking]);
 
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const hasBookingTasks = tasks.active.length > 0 || tasks.pending.length > 0;
+
+    if (hasBookingTasks) {
+      setPanelMode("tasks");
+    }
+  }, [isOnline, tasks.active, tasks.pending]);
+
   // fetch PoPas & paint markers
   useEffect(() => {
     let timer: any;
@@ -1026,12 +1145,13 @@ export default function DHome() {
 
         if (!center) return;
 
-        const driverId = await AsyncStorage.getItem("driverId");
-        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10${
-          driverId ? `&driverId=${driverId}` : ""
-        }&ai=1`;
-
-        const r = await fetch(url);
+        if (!driverId || !token) return;
+        const url = `${API_BASE_URL}/api/waiting-bookings?lat=${center.lat}&lng=${center.lng}&radiusKm=5&limit=10&ai=1`;
+        const r = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
         const text = await r.text();
         let data: any = [];
         try {
@@ -1195,14 +1315,22 @@ export default function DHome() {
 
       dbg("DHOME:confirmPayment", { bookingId: idToComplete });
 
+      if (!token) {
+        Alert.alert("Session expired", "Please log in again.");
+        return;
+      }
+
       const res = await fetch(`${API_BASE_URL}/api/complete-booking`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ bookingId: idToComplete }),
       });
 
       if (res.ok) {
-        Alert.alert("✅ Payment Confirmed", "Transaction completed!");
+        Alert.alert("Payment Confirmed", "Transaction completed!");
 
         const idStr = String(idToComplete);
 

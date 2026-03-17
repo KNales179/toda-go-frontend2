@@ -39,7 +39,6 @@ export default function EL() {
 
         // Get user's location
         const location = await Location.getCurrentPositionAsync({});
-        console.log("User's location:", location);
         setTimeout(() => {
             router.push("/location/welcome");
         }, 1000);

@@ -1,9 +1,14 @@
-// PChats.tsx – no auth context; uses AsyncStorage(passengerId)
-
+//pchats.tsx
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
-  Dimensions, ActivityIndicator, Image
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  ActivityIndicator,
+  Image,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../../config";
@@ -17,23 +22,34 @@ const SOCKET_URL = API_BASE_URL.replace(/\/api\/?$/, "");
 
 export default function PChats() {
   const [passengerId, setPassengerId] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hydrating, setHydrating] = useState(true); // wait for AsyncStorage
+  const [hydrating, setHydrating] = useState(true);
   const socketRef = useRef<Socket | null>(null);
 
-  // Hydrate passengerId from storage
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
-        const pid = await AsyncStorage.getItem("passengerId");
-        if (mounted) setPassengerId(pid);
+        const [pid, storedToken] = await Promise.all([
+          AsyncStorage.getItem("passengerId"),
+          AsyncStorage.getItem("token"),
+        ]);
+
+        if (mounted) {
+          setPassengerId(pid);
+          setToken(storedToken);
+        }
       } finally {
         if (mounted) setHydrating(false);
       }
     })();
-    return () => { mounted = false; };
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const getImageUri = (path?: string | null) => {
@@ -42,49 +58,59 @@ export default function PChats() {
     return `${API_BASE_URL.replace(/\/$/, "")}/${String(path).replace(/^\/+/, "")}`;
   };
 
-  const fetchDriverProfile = useCallback(async (driverId: string) => {
-    try {
-      const url = `${API_BASE_URL.replace(/\/$/, "")}/api/driver/${driverId}`;
-      console.log("👤 Fetching driver profile:", url);
+  const fetchDriverProfile = useCallback(
+    async (driverId: string) => {
+      if (!token) return null;
 
-      const res = await fetch(url);
-      const data = await res.json();
+      try {
+        const url = `${API_BASE_URL.replace(/\/$/, "")}/api/driver/${driverId}`;
+        const res = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
 
-      console.log("✅ Driver profile response:", driverId, data);
+        if (!res.ok) return null;
 
-      return data?.driver ?? null;
-    } catch (err) {
-      console.error("❌ fetchDriverProfile error:", driverId, err);
-      return null;
-    }
-  }, []);
+        const data = await res.json();
+        return data?.driver ?? null;
+      } catch (err) {
+        console.error("❌ fetchDriverProfile error:", driverId, err);
+        return null;
+      }
+    },
+    [token]
+  );
 
   const fetchSessions = useCallback(async () => {
-    if (!passengerId) return;
+    if (!passengerId || !token) {
+      setSessions([]);
+      setLoading(false);
+      return;
+    }
 
     try {
+      setLoading(true);
+
       const url = `${API}/sessions/passenger/${passengerId}`;
-      console.log("📥 Fetching passenger sessions from:", url);
-      console.log("🆔 passengerId:", passengerId);
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-      const res = await fetch(url);
+      if (!res.ok) {
+        const raw = await res.text().catch(() => "");
+        console.error("❌ fetch passenger sessions failed:", res.status, raw);
+        setSessions([]);
+        return;
+      }
+
       const data = await res.json();
-
-      console.log("✅ Raw passenger sessions response:", data);
-
       const rawSessions = Array.isArray(data) ? data : [];
 
       const enrichedSessions = await Promise.all(
-        rawSessions.map(async (item, index) => {
-          console.log(`📨 Session[${index}]`, {
-            bookingId: item.bookingId,
-            driverId: item.driverId,
-            driverName: item.driverName,
-            passengerId: item.passengerId,
-            lastMessage: item.lastMessage,
-            lastAt: item.lastAt,
-          });
-
+        rawSessions.map(async (item) => {
           if (!item.driverId) {
             return {
               ...item,
@@ -110,12 +136,6 @@ export default function PChats() {
                   .trim() ||
                 "Driver";
 
-          console.log("🖼️ Enriched session:", {
-            driverId: item.driverId,
-            resolvedDriverName: driverName,
-            selfieImage,
-          });
-
           return {
             ...item,
             driverName,
@@ -127,21 +147,27 @@ export default function PChats() {
       setSessions(enrichedSessions);
     } catch (err) {
       console.error("❌ fetch passenger sessions:", err);
+      setSessions([]);
     } finally {
       setLoading(false);
     }
-  }, [passengerId, fetchDriverProfile]);
+  }, [passengerId, token, fetchDriverProfile]);
 
-  // Socket + initial fetch whenever passengerId becomes available
   useEffect(() => {
-    if (!passengerId) return;
+    if (!passengerId || !token) return;
 
-    const s = io(SOCKET_URL, { transports: ["websocket"] });
+    const s = io(SOCKET_URL, {
+      transports: ["websocket"],
+    });
+
     socketRef.current = s;
 
     fetchSessions();
 
-    const onUpd = () => fetchSessions();
+    const onUpd = () => {
+      fetchSessions();
+    };
+
     s.emit("sessions:subscribe", { passengerId, role: "passenger" });
     s.on("sessions:update", onUpd);
 
@@ -150,9 +176,8 @@ export default function PChats() {
       s.disconnect();
       socketRef.current = null;
     };
-  }, [passengerId, fetchSessions]);
+  }, [passengerId, token, fetchSessions]);
 
-  // UI states
   if (hydrating) {
     return (
       <View style={styles.loading}>
@@ -161,7 +186,7 @@ export default function PChats() {
     );
   }
 
-  if (!passengerId) {
+  if (!passengerId || !token) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>MESSAGES</Text>
@@ -223,17 +248,15 @@ export default function PChats() {
     const avatarUri = getImageUri(item.driverProfileImage);
     const unreadCount = Number(item?.unseenCount ?? 0);
     const isUnread = unreadCount > 0;
-    const statusText = getLastStatusText(item);
 
-    console.log("🖼️ Rendering chat row:", {
-      driverId: item.driverId,
-      driverName: item.driverName,
-      unreadCount,
-      seen: item.seen,
-      delivered: item.delivered,
-      lastMessageSenderRole: item.lastMessageSenderRole,
-      lastMessageSenderId: item.lastMessageSenderId,
-    });
+    const statusText = getLastStatusText(item);
+    const isTyping = !!item?.isTyping;
+
+    const previewText = isTyping
+      ? "Typing..."
+      : item?.lastMessage
+      ? item.lastMessage
+      : "New chat";
 
     return (
       <TouchableOpacity
@@ -262,12 +285,11 @@ export default function PChats() {
             }
             style={styles.avatar}
           />
-
-          {isUnread ? <View style={styles.onlineDot} /> : null}
+          {isUnread ? <View style={styles.unreadDotOnAvatar} /> : null}
         </View>
 
-        <View style={styles.chatBody}>
-          <View style={styles.topRow}>
+        <View style={styles.chatMain}>
+          <View style={styles.leftContent}>
             <Text
               numberOfLines={1}
               style={[styles.booking, isUnread && styles.bookingUnread]}
@@ -275,28 +297,28 @@ export default function PChats() {
               {item.driverName || "Driver"}
             </Text>
 
-            <Text style={[styles.time, isUnread && styles.timeUnread]}>
-              {formatChatTime(item.lastAt)}
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.preview,
+                isUnread && styles.previewUnread,
+                isTyping && styles.typingText,
+              ]}
+            >
+              {previewText}
             </Text>
           </View>
 
-          <View style={styles.bottomRow}>
-            <View style={styles.previewWrap}>
-              <Text
-                numberOfLines={1}
-                style={[styles.preview, isUnread && styles.previewUnread]}
-              >
-                {item.lastMessage || "— no messages yet —"}
+          <View style={styles.rightMeta}>
+            <Text style={[styles.time, isUnread && styles.timeUnread]}>
+              {formatChatTime(item.lastAt)}
+            </Text>
+
+            {!!statusText ? (
+              <Text style={styles.statusText} numberOfLines={1}>
+                {statusText}
               </Text>
-
-              {!!statusText && !isUnread ? (
-                <Text numberOfLines={1} style={styles.statusText}>
-                  {statusText}
-                </Text>
-              ) : null}
-            </View>
-
-            {isUnread ? (
+            ) : unreadCount > 0 ? (
               unreadCount > 1 ? (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>
@@ -304,9 +326,11 @@ export default function PChats() {
                   </Text>
                 </View>
               ) : (
-                <View style={styles.unreadDot} />
+                <View style={styles.rightUnreadDot} />
               )
-            ) : null}
+            ) : (
+              <View style={styles.statusPlaceholder} />
+            )}
           </View>
         </View>
       </TouchableOpacity>
@@ -354,30 +378,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  chatCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#F8FAFC",
-  },
-
-  chatCardUnread: {
-    backgroundColor: "#EEF6FF",
-  },
-
-  avatarWrap: {
-    position: "relative",
-    marginRight: 12,
-  },
-
-  avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: "#D1D5DB",
-  },
-
   onlineDot: {
     position: "absolute",
     right: 1,
@@ -416,68 +416,12 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
 
-  booking: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginRight: 8,
-  },
-
-  bookingUnread: {
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-
-  preview: {
-    fontSize: 14,
-    color: "#6B7280",
-  },
-
-  previewUnread: {
-    color: "#111827",
-    fontWeight: "700",
-  },
-
-  statusText: {
-    marginTop: 2,
-    fontSize: 12,
-    color: "#9CA3AF",
-  },
-
-  time: {
-    fontSize: 12,
-    color: "#9CA3AF",
-  },
-
-  timeUnread: {
-    color: "#2563EB",
-    fontWeight: "700",
-  },
-
   unreadDot: {
     width: 10,
     height: 10,
     borderRadius: 999,
     backgroundColor: "#2563EB",
     marginLeft: 8,
-  },
-
-  badge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 999,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 6,
-    marginLeft: 8,
-  },
-
-  badgeText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "700",
   },
 
   loading: {
@@ -506,5 +450,138 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#4B5563",
     lineHeight: 21,
+  },
+
+  chatCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#F8FAFC",
+  },
+
+  chatCardUnread: {
+    backgroundColor: "#EEF6FF",
+  },
+
+  avatarWrap: {
+    position: "relative",
+    marginRight: 12,
+  },
+
+  avatar: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "#D1D5DB",
+  },
+
+  unreadDotOnAvatar: {
+    position: "absolute",
+    right: 1,
+    bottom: 1,
+    width: 13,
+    height: 13,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+
+  chatMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingBottom: 10,
+  },
+
+  leftContent: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 10,
+  },
+
+  rightMeta: {
+    width: 72,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+
+  booking: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 3,
+  },
+
+  bookingUnread: {
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+
+  preview: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+
+  previewUnread: {
+    color: "#111827",
+    fontWeight: "700",
+  },
+
+  typingText: {
+    color: "#2563EB",
+    fontStyle: "italic",
+    fontWeight: "600",
+  },
+
+  time: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    textAlign: "right",
+  },
+
+  timeUnread: {
+    color: "#2563EB",
+    fontWeight: "700",
+  },
+
+  statusText: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#9CA3AF",
+    textAlign: "right",
+  },
+
+  rightUnreadDot: {
+    marginTop: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+  },
+
+  statusPlaceholder: {
+    marginTop: 6,
+    height: 10,
+  },
+
+  badge: {
+    marginTop: 6,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+
+  badgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });

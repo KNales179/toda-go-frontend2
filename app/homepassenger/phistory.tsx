@@ -271,8 +271,6 @@ export default function PHistory() {
     try {
       const base = API_BASE_URL.replace(/\/$/, "");
       const paths = [
-        `/ridehistory?passengerId=${encodeURIComponent(passengerId)}`,
-        `/api/ridehistory?passengerId=${encodeURIComponent(passengerId)}`,
         `/rides`,
         `/api/rides`,
       ];
@@ -282,7 +280,14 @@ export default function PHistory() {
         const url = `${base}${paths[i]}`;
         const filterLocally = i >= 2;
         try {
-          const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
+          const token = await AsyncStorage.getItem("token");
+
+          const res = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Cache-Control": "no-store",
+            },
+          });
           const text = await res.text();
           let data: any;
           try {
@@ -364,7 +369,14 @@ export default function PHistory() {
             let success = false;
             for (const url of candidates) {
               try {
-                const res = await fetch(url, { method: "DELETE" });
+                const token = await AsyncStorage.getItem("token");
+
+                const res = await fetch(url, {
+                  method: "DELETE",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                });
                 const text = await res.text();
                 if (res.ok) { success = true; break; }
               } catch (e) {
@@ -414,11 +426,15 @@ export default function PHistory() {
 
     try {
       setSendingReport(true);
+      const token = await AsyncStorage.getItem("token");
       const res = await fetch(
         `${API_BASE_URL.replace(/\/$/, "")}/api/feedback/submit-report`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify(payload),
         }
       );

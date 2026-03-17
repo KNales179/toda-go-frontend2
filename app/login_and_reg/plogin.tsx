@@ -44,13 +44,16 @@ export default function PLogin() {
   }
 
   const loginUser = async () => {
-    if (busy) return;            // (4) bail if already logging in
-    setBusy(true);               // (4) lock the button
+    if (busy) return;
+    setBusy(true);
 
     Keyboard.dismiss();
 
     try {
-      // if (__DEV__) { await wakeBackend(API_BASE_URL); }
+      console.log("AUTH:PLOGIN:start", {
+        email,
+        api: `${API_BASE_URL}/api/login/passenger/login`,
+      });
 
       const response = await fetch(`${API_BASE_URL}/api/login/passenger/login`, {
         method: "POST",
@@ -58,13 +61,17 @@ export default function PLogin() {
         body: JSON.stringify({ email, password: pass }),
       });
 
-      // (5) defensive JSON parsing
       const text = await response.text();
       let data: any = null;
       try {
         data = text ? JSON.parse(text) : null;
-      } catch {
-      }
+      } catch {}
+
+      console.log("AUTH:PLOGIN:response", {
+        ok: response.ok,
+        status: response.status,
+        rawData: data,
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -72,21 +79,50 @@ export default function PLogin() {
         );
       }
 
-      const passengerId = data?.userId || data?.passenger?._id || data?.user?._id || data?._id;
+      const passengerId =
+        data?.userId || data?.passenger?._id || data?.user?._id || data?._id;
 
-      if (!passengerId)
+      if (!passengerId) {
         throw new Error("Login succeeded but no passengerId returned");
+      }
 
-      // ✅ find token key from backend response
       const token =
         data?.token || data?.accessToken || data?.jwt || data?.authToken;
 
-      // ✅ store ids
+      console.log("AUTH:PLOGIN:parsed", {
+        passengerId,
+        hasToken: !!token,
+        tokenPreview: token ? String(token).slice(0, 20) + "..." : null,
+      });
+
       await AsyncStorage.setItem("passengerId", String(passengerId));
+
+      const savedPassengerId = await AsyncStorage.getItem("passengerId");
+      console.log("AUTH:PLOGIN:storedLegacyPassengerId", {
+        savedPassengerId,
+      });
+
       if (token) {
         await AsyncStorage.setItem("token", String(token));
-      } else {
 
+        const savedToken = await AsyncStorage.getItem("token");
+        console.log("AUTH:PLOGIN:storedLegacyToken", {
+          hasSavedToken: !!savedToken,
+          tokenPreview: savedToken ? String(savedToken).slice(0, 20) + "..." : null,
+        });
+
+        await saveAuth({
+          token: String(token),
+          userId: String(passengerId),
+          role: "passenger",
+        });
+
+        const savedAuth = await AsyncStorage.getItem("auth");
+        console.log("AUTH:PLOGIN:afterSaveAuth", {
+          rawAuthStorage: savedAuth,
+        });
+      } else {
+        throw new Error("Login succeeded but no token returned");
       }
 
       const infoRes = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`, {
@@ -99,6 +135,12 @@ export default function PLogin() {
         info = infoText ? JSON.parse(infoText) : null;
       } catch {}
 
+      console.log("AUTH:PLOGIN:passengerInfo", {
+        infoStatus: infoRes.status,
+        infoOk: infoRes.ok,
+        info,
+      });
+
       const passenger = info?.passenger || null;
       const r = passenger?.restriction || null;
 
@@ -107,11 +149,18 @@ export default function PLogin() {
       const active = isRestricted && (!endAt || endAt > Date.now());
 
       if (active) {
+        console.log("AUTH:PLOGIN:restricted", {
+          passengerId,
+          restriction: r,
+        });
+
         router.replace({
           pathname: "/restriction",
           params: {
             userType: "passenger",
-            name: passenger?.firstName ? `${passenger.firstName} ${passenger.lastName || ""}`.trim() : "Passenger",
+            name: passenger?.firstName
+              ? `${passenger.firstName} ${passenger.lastName || ""}`.trim()
+              : "Passenger",
             type: r?.type || "ban",
             reason: r?.reason || "",
             endAt: r?.endAt ? String(r.endAt) : "",
@@ -120,17 +169,23 @@ export default function PLogin() {
         return;
       }
 
+      console.log("AUTH:PLOGIN:navigate", {
+        to: "../homepassenger/phome",
+        passengerId,
+        hasToken: !!token,
+      });
+
       Alert.alert("Login Successful", "Welcome!");
       router.replace("../homepassenger/phome");
-
-
     } catch (error: any) {
-      if (error?.name === "AbortError") {
-      }
-      console.error("Login error (passenger):", error, error?.stack);
+      console.error("AUTH:PLOGIN:error", {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+      });
       Alert.alert("Login Failed", error?.message || "Network/server error");
     } finally {
-      setBusy(false);            // (4) unlock the button
+      setBusy(false);
     }
   };
 

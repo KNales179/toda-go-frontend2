@@ -65,7 +65,19 @@ export default function DLogin() {
         data?.token || data?.accessToken || data?.jwt || data?.authToken;
 
       if (token) {
-        await AsyncStorage.setItem("driverToken", String(token));
+        await AsyncStorage.setItem("token", String(token));
+        await AsyncStorage.setItem("role", "driver");
+        await AsyncStorage.setItem("userId", String(driverId));
+        await AsyncStorage.setItem("driverId", String(driverId));
+        await AsyncStorage.setItem(
+          "toda.auth",
+          JSON.stringify({
+            token: String(token),
+            role: "driver",
+            userId: String(driverId),
+            driverId: String(driverId),
+          })
+        );
       } else {
       }
 

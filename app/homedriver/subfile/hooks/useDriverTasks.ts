@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL } from "@/config";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type Task = {
   _id: string;
@@ -24,7 +25,13 @@ export function useDriverTasks(driverId: string, enabled: boolean) {
   const fetchTasks = useCallback(async () => {
     if (!driverId) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/${driverId}`);
+      const token = await AsyncStorage.getItem("token");
+
+      const res = await fetch(`${API_BASE_URL}/api/tasks/${driverId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
       const json = await res.json();
       setTasks(Array.isArray(json?.tasks) ? json.tasks : []);
     } catch {
@@ -36,9 +43,13 @@ export function useDriverTasks(driverId: string, enabled: boolean) {
     async (pos: LatLng) => {
       if (!driverId) return false;
       try {
+        const token = await AsyncStorage.getItem("token");
         const res = await fetch(`${API_BASE_URL}/api/tasks/replan`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ driverId, lat: pos.lat, lng: pos.lng }),
         });
         const json = await res.json().catch(() => null);
@@ -56,9 +67,13 @@ export function useDriverTasks(driverId: string, enabled: boolean) {
   const completeTask = useCallback(
     async (taskId: string, pos: LatLng) => {
       try {
+        const token = await AsyncStorage.getItem("token");
         const res = await fetch(`${API_BASE_URL}/api/tasks/${taskId}/complete`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ driverLat: pos.lat, driverLng: pos.lng }),
         });
         const json = await res.json().catch(() => null);

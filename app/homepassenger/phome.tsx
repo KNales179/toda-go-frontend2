@@ -139,6 +139,7 @@ const POI_ICON_FILES: Record<string, any> = {
 
 
 export default function PHome() {
+  console.log("AUTH:PHOME:render");
   const { location, loading } = useLocation();
   const [copied, setCopied] = useState(false);
   const [destination, setDestination] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -244,6 +245,29 @@ export default function PHome() {
 
   const BOOKING_DEBUG = true;
 
+  const getPassengerSession = async () => {
+    const auth = await getAuth();
+    const [legacyPassengerId, legacyToken] = await Promise.all([
+      AsyncStorage.getItem("passengerId"),
+      AsyncStorage.getItem("token"),
+    ]);
+
+    const resolvedPassengerId =
+      auth?.role === "passenger" && auth?.userId
+        ? String(auth.userId)
+        : legacyPassengerId;
+
+    const resolvedToken =
+      auth?.role === "passenger" && auth?.token
+        ? String(auth.token)
+        : legacyToken;
+
+    return {
+      passengerId: resolvedPassengerId || null,
+      token: resolvedToken || null,
+    };
+  };
+
   const persistBookingState = async (overrides?: Partial<any>) => {
     try {
       const bookingState = {
@@ -293,7 +317,10 @@ export default function PHome() {
 
   const restoreBookingFromServer = async (id: string | number) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/bookings`);
+      const session = await getPassengerSession();
+      const res = await fetch(`${API_BASE_URL}/api/bookings`, {
+        headers: session.token ? { Authorization: `Bearer ${session.token}` } : {},
+      });
       const allBookings = await res.json();
 
       const liveBooking = Array.isArray(allBookings)
@@ -461,7 +488,10 @@ export default function PHome() {
         return;
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/bookings`);
+      const session = await getPassengerSession();
+      const res = await fetch(`${API_BASE_URL}/api/bookings`, {
+        headers: session.token ? { Authorization: `Bearer ${session.token}` } : {},
+      });
       const allBookings = await res.json();
 
       if (!Array.isArray(allBookings)) {
@@ -629,19 +659,24 @@ export default function PHome() {
     if (!passengerId) return;
 
     (async () => {
-      const token = await registerForPushNotificationsAsync();
-      if (!token) return;
+      const expoPushToken = await registerForPushNotificationsAsync();
+      if (!expoPushToken) return;
 
-      setPushToken(token);
+      setPushToken(expoPushToken);
 
       try {
+        const session = await getPassengerSession();
+
         await fetch(`${API_BASE_URL}/api/passenger/push-token`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ passengerId, pushToken: token }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+          },
+          body: JSON.stringify({ passengerId, pushToken: expoPushToken }),
         });
 
-        dbg("PHOME:tokenSaved", { passengerId, token });
+        dbg("PHOME:tokenSaved", { passengerId, token: expoPushToken });
       } catch (e) {
         dbg("PHOME:tokenError", { passengerId, error: String(e) });
       }
@@ -710,23 +745,25 @@ export default function PHome() {
   useEffect(() => {
     (async () => {
       try {
-        const auth = await getAuth();
-        if (auth?.role === "passenger" && auth?.userId) {
-          setPassengerId(String(auth.userId));
+        console.log("AUTH:PHOME:boot:start");
+
+        const session = await getPassengerSession();
+
+        console.log("AUTH:PHOME:boot:storage", {
+          passengerId: session.passengerId,
+          hasToken: !!session.token,
+          tokenPreview: session.token ? String(session.token).slice(0, 20) + "..." : null,
+        });
+
+        if (session.passengerId) {
+          setPassengerId(String(session.passengerId));
           return;
         }
 
-        // 2) fallback to legacy key (keeps old screens working)
-        const legacy = await AsyncStorage.getItem("passengerId");
-        if (legacy) {
-          setPassengerId(legacy);
-          return;
-        }
-
-        // 3) no id → force re-login
         Alert.alert("Session expired", "Please log in again.");
         router.replace("/login_and_reg/plogin");
-      } catch {
+      } catch (err) {
+        console.error("AUTH:PHOME:boot:error", err);
         Alert.alert("Error", "Could not load your session. Please log in again.");
         router.replace("/login_and_reg/plogin");
       }
@@ -741,6 +778,12 @@ export default function PHome() {
       passengerType: bookingType,
     });
   }, [bookingType, mapReady]);
+
+  useEffect(() => {
+    console.log("AUTH:PHOME:passengerIdChanged", {
+      passengerId,
+    });
+  }, [passengerId]);
 
 
   // useEffect(() => {
@@ -920,15 +963,18 @@ export default function PHome() {
     const myReqId = ++routeReqIdRef.current;
 
     try {
+      const session = await getPassengerSession();
       const res = await fetch(`${API_BASE_URL}/api/route`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+        },
         body: JSON.stringify({
           start: [from.longitude, from.latitude],
           end:   [to.longitude,   to.latitude],
         }),
       });
-
       const data = await res.json();
       if (!res.ok || !data?.features?.[0]?.geometry?.coordinates) return;
       if (myReqId !== routeReqIdRef.current) return; 
@@ -967,9 +1013,13 @@ export default function PHome() {
         end:   [destination.longitude, destination.latitude] // [lng, lat]
       };
 
+      const session = await getPassengerSession();
       const res = await fetch(`${API_BASE_URL}/api/route/variants`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+        },
         body: JSON.stringify(body),
       });
 
@@ -1183,18 +1233,39 @@ export default function PHome() {
 
   useEffect(() => {
     (async () => {
-      const fallback = "https://cdn-icons-png.flaticon.com/512/847/847969.png"; // simple silhouette
+      const fallback = "https://cdn-icons-png.flaticon.com/512/847/847969.png";
       try {
-        const passengerId = await AsyncStorage.getItem("passengerId");
-        if (!passengerId) return setAvatarUrl(fallback);
+        const session = await getPassengerSession();
+        if (!session.passengerId || !session.token) {
+          setAvatarUrl(fallback);
+          return;
+        }
 
-        const r = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`);
-        const j = await r.json();
-        const img =
+        const r = await fetch(`${API_BASE_URL}/api/passenger/${session.passengerId}`, {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        });
+
+        const j = await r.json().catch(() => null);
+
+        const raw =
           j?.passenger?.profileImage ||
           j?.passenger?.selfieImage ||
-          j?.passenger?.avatar;
-        setAvatarUrl(img ? `${API_BASE_URL}/${img}` : fallback);
+          j?.passenger?.avatar ||
+          null;
+
+        if (!raw) {
+          setAvatarUrl(fallback);
+          return;
+        }
+
+        const built =
+          /^https?:\/\//i.test(raw)
+            ? raw
+            : `${API_BASE_URL.replace(/\/$/, "")}/${String(raw).replace(/^\/+/, "")}`;
+
+        setAvatarUrl(built);
       } catch {
         setAvatarUrl(fallback);
       }
@@ -1341,25 +1412,6 @@ export default function PHome() {
   //   return () => backHandler.remove();
   // }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const passengerId = await AsyncStorage.getItem("passengerId");
-        if (!passengerId) return;
-        const r = await fetch(`${API_BASE_URL}/api/passenger/${passengerId}`);
-        const j = await r.json();
-        const path: string | undefined =
-          j?.passenger?.selfieImage || j?.passenger?.avatarUrl;
-        if (path) {
-          setAvatarUrl(path.startsWith("http") ? path : `${API_BASE_URL}/${path}`);
-        } else {
-          setAvatarUrl(null); // no image, still show blue dot
-        }
-      } catch {
-        setAvatarUrl(null);
-      }
-    })();
-  }, []);
   
   useEffect(() => {
     if (!location) return;
@@ -1693,7 +1745,6 @@ export default function PHome() {
     dbg("PHOME:bookingSubmitted", {
       pickup,
       destination,
-      passengerId,
     });
 
 
@@ -1736,7 +1787,6 @@ export default function PHome() {
       fare,
       paymentMethod,
       notes,
-      passengerId,
       pickupPlace: pickupName,
       bookedFor,
       riderName: bookedFor ? riderName.trim() : "",
@@ -1745,7 +1795,6 @@ export default function PHome() {
       bookingType,
       partySize: normalizedParty,
       chosenRoute: chosenRoutePayload,
-
     };
     if (chosenRoutePayload && Array.isArray(chosenRoutePayload.coords)) {
     }
@@ -1762,9 +1811,26 @@ export default function PHome() {
       setShowBookingForm(false);
       setSearching(true);
 
+      const token = await AsyncStorage.getItem("token");
+      console.log("AUTH:PHOME:handleBookNow:tokenCheck", {
+        passengerId,
+        hasToken: !!token,
+        tokenPreview: token ? String(token).slice(0, 20) + "..." : null,
+      });
+
+      if (!token) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+        setSearching(false);
+        return;
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/book`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(bookingData),
       });
 
@@ -1850,7 +1916,10 @@ export default function PHome() {
       if (!bookingId) return;
 
       try {
-        const res = await fetch(`${API_BASE_URL}/api/bookings`);
+        const session = await getPassengerSession();
+        const res = await fetch(`${API_BASE_URL}/api/bookings`, {
+          headers: session.token ? { Authorization: `Bearer ${session.token}` } : {},
+        });
         const allBookings = await res.json();
         const myBooking = allBookings.find((b: any) => b && b.id === bookingId);
 
@@ -1941,7 +2010,10 @@ export default function PHome() {
       if (!bookingId) return;
 
       try {
-        const res = await fetch(`${API_BASE_URL}/api/bookings`);
+        const session = await getPassengerSession();
+        const res = await fetch(`${API_BASE_URL}/api/bookings`, {
+          headers: session.token ? { Authorization: `Bearer ${session.token}` } : {},
+        });
         const allBookings = await res.json();
         const myBooking = allBookings.find((b: any) => b && b.id === bookingId);
 
@@ -2109,9 +2181,20 @@ export default function PHome() {
       }
       dbg("PHOME:cancelRequested", { bookingId });
 
+      const token = await AsyncStorage.getItem("token");
+
+      if (!token) {
+        Alert.alert("Session expired", "Please log in again.");
+        router.replace("/login_and_reg/plogin");
+        return;
+      }
+
       const resp = await fetch(`${API_BASE_URL}/api/cancel-booking`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ bookingId }),
       });
       const body = await resp.text();
@@ -2150,19 +2233,27 @@ export default function PHome() {
         Alert.alert("Error", "No driver or booking ID found to rate.");
         return;
       }
+      const session = await getPassengerSession();
+
       const res = await fetch(`${API_BASE_URL}/api/feedback/rate-driver`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+        },
         body: JSON.stringify({ driverId: driverIdToRate, rating: selectedRating }),
       });
 
       if (res.ok && notes) {
         await fetch(`${API_BASE_URL}/api/feedback/submit-feedback`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+          },
           body: JSON.stringify({
             bookingId: bookingIdToRate,
-            passengerId: await AsyncStorage.getItem("passengerId"),
+            passengerId: session.passengerId,
             driverId: driverIdToRate,
             feedback: notes,
           }),
@@ -2190,14 +2281,23 @@ export default function PHome() {
 
   const submitReport = async () => {
     try {
-      const passengerId = await AsyncStorage.getItem("passengerId");
+      const session = await getPassengerSession();
+
       const res = await fetch(`${API_BASE_URL}/api/feedback/submit-report`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+        },
         body: JSON.stringify({
-          bookingId, passengerId, driverId: matchedDriver?.driverId, reportType, otherReport,
+          bookingId,
+          passengerId: session.passengerId,
+          driverId: matchedDriver?.driverId,
+          reportType,
+          otherReport,
         }),
       });
+
       if (res.ok) {
         Alert.alert("Success", "Report submitted!");
         setShowReportModal(false);
@@ -2961,7 +3061,7 @@ export default function PHome() {
             {!showBookingForm && !(searching || !!bookingId || bookingConfirmed || !!matchedDriver) && (
               <TouchableOpacity
                 onPress={() => setShowBookingForm(true)}
-                style={{ position: "absolute", bottom: 10, backgroundColor: "#81C3E1", padding: 10, borderRadius: 8 }}
+                style={{ position: "absolute", bottom: 10, backgroundColor: "#5089A3", padding: 10, borderRadius: 8 }}
               >
                 <Text style={{ fontWeight: "bold", fontSize: 16, color: "white" }}>START BOOKING</Text>
               </TouchableOpacity>
