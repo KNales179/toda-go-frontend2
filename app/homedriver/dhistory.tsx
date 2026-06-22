@@ -22,6 +22,7 @@ type RideItem = {
   _id: string;
   bookingId?: string;
   passengerId?: string;
+  passengerName?: string;
   driverName?: string;
 
   pickupLat?: number | undefined;
@@ -47,6 +48,7 @@ type RideItem = {
 
 export default function DHistory() {
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [driverName, setDriverName] = useState<string>("");
   const [allItems, setAllItems] = useState<RideItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,44 +73,55 @@ export default function DHistory() {
 
   useEffect(() => {
     (async () => {
-      const id = (await AsyncStorage.getItem("driverId")) || (await AsyncStorage.getItem("userId"));
-      setDriverId(id || null);
+      const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+        AsyncStorage.getItem("driverId"),
+        AsyncStorage.getItem("token"),
+        AsyncStorage.getItem("toda.auth"),
+      ]);
 
-      if (!id) return;
+      let todaAuth: any = null;
+      try {
+        todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+      } catch {}
 
-      // Try common driver endpoints (adjust if your backend uses a different route)
+      const id =
+        rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+
+      const resolvedToken =
+        rawToken || todaAuth?.token || null;
+
+      setDriverId(id ? String(id) : null);
+      setToken(resolvedToken ? String(resolvedToken) : null);
+
+      if (!id || !resolvedToken) return;
+
       const base = API_BASE_URL.replace(/\/$/, "");
-      const candidates = [
-        `${base}/drivers/${id}`,
-        `${base}/api/drivers/${id}`,
-        `${base}/driver/${id}`,
-        `${base}/api/driver/${id}`,
-      ];
+      const url = `${base}/api/driver/${id}`;
 
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
-          if (!res.ok) continue;
-          const data = await res.json();
+      try {
+        const res = await fetch(url, {
+          headers: {
+            "Cache-Control": "no-store",
+            Authorization: `Bearer ${resolvedToken}`,
+          },
+        });
 
-          // Accept several possible fields
-          const name =
-            data?.driverName ||
-            data?.name ||
-            [data?.driverFirstName, data?.driverMiddleName, data?.driverLastName]
-              .filter(Boolean)
-              .join(" ")
-              .replace(/\s+/g, " ")
-              .trim();
+        if (!res.ok) return;
 
-          if (name) {
-            setDriverName(String(name));
-            break;
-          }
-        } catch (e) {
-          // ignore, try next url
-        }
-      }
+        const data = await res.json();
+        const d = data?.driver || data || null;
+
+        const name =
+          d?.driverName ||
+          d?.name ||
+          [d?.driverFirstName, d?.driverMiddleName, d?.driverLastName]
+            .filter(Boolean)
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (name) setDriverName(String(name));
+      } catch {}
     })();
   }, []);
 
@@ -182,6 +195,7 @@ export default function DHistory() {
         _id: String(r._id),
         bookingId: r.bookingId,
         passengerId: r.passengerId,
+        passengerName: r.passengerName,
         driverName: r.driverName,
         pickupLat,
         pickupLng,
@@ -251,28 +265,37 @@ export default function DHistory() {
   };
 
   const fetchAll = useCallback(async () => {
-    if (!driverId) { setLoading(false); setRefreshing(false); return; }
+    if (!driverId || !token) { setLoading(false); setRefreshing(false); return; }
     try {
       setLoading(true);
       const base = API_BASE_URL.replace(/\/$/, "");
       const paths = [
-        `/ridehistory?driverId=${encodeURIComponent(driverId)}`,
         `/api/ridehistory?driverId=${encodeURIComponent(driverId)}`,
-        `/rides`,
-        `/api/rides`,
+        `/ridehistory?driverId=${encodeURIComponent(driverId)}`,
       ];
       let got: RideItem[] | null = null;
 
-      for (let i = 0; i < paths.length; i++) {
-        const url = `${base}${paths[i]}`;
-        const filterLocally = i >= 2;
+      for (const path of paths) {
+        const url = `${base}${path}`;
         try {
-          const res = await fetch(url, { headers: { "Cache-Control": "no-store" } });
+          const res = await fetch(url, {
+            headers: {
+              "Cache-Control": "no-store",
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (!res.ok) continue;
+
           const text = await res.text();
           let data: any;
           try { data = JSON.parse(text); } catch { continue; }
-          let raw: any[] = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
-          if (filterLocally) raw = raw.filter((x: any) => String(x.driverId) === String(driverId));
+
+          const raw: any[] = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.items)
+            ? data.items
+            : [];
+
           got = normalize(raw);
           break;
         } catch {}
@@ -300,7 +323,7 @@ export default function DHistory() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [driverId]);
+  }, [driverId, token]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -555,6 +578,11 @@ export default function DHistory() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
+          if (!token) {
+            Alert.alert("Session expired", "Please log in again.");
+            return;
+          }
+
           const prev = allItems;
           setAllItems((list) => list.filter((x) => x._id !== id));
           try {
@@ -563,7 +591,12 @@ export default function DHistory() {
             let success = false;
             for (const url of candidates) {
               try {
-                const res = await fetch(url, { method: "DELETE" });
+                const res = await fetch(url, {
+                  method: "DELETE",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                });
                 if (res.ok) { success = true; break; }
               } catch {}
             }
@@ -870,13 +903,15 @@ function HistoryCard({
 
       {expanded && (
         <View style={styles.expandBox}>
-          <Text style={styles.expandTitle}>Passenger: <Text style={{ fontWeight: "600" }}>{item.passengerId || "—"}</Text></Text>
-          {!!item.notes && <Text style={styles.expandNote} numberOfLines={4}>Note: {item.notes}</Text>}
-
           <View style={styles.expandFooter}>
             <View style={{ flex: 1 }}>
-              {!!item.bookingId && <Text style={styles.meta}>Booking: {item.bookingId}</Text>}
-              {!!item.paymentMethod && <Text style={styles.meta}>Payment: {item.paymentMethod}</Text>}
+              <Text style={styles.expandTitle}>
+                Passenger: <Text style={{ fontWeight: "600" }}>{item.passengerName || item.passengerId || "—"}</Text>
+              </Text>
+              <Text style={styles.meta}>
+                Payment: {String(item.paymentMethod || "").toLowerCase() === "gcash" ? "GCash" : "Cash"}
+              </Text>
+              {!!item.notes && <Text style={styles.expandNote} numberOfLines={4}>Note: {item.notes}</Text>}
             </View>
             <View style={styles.actionsRow}>
               <TouchableOpacity onPress={onDelete} style={styles.trashBtn}>

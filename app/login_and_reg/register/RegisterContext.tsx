@@ -1,28 +1,8 @@
-//RegisterContext.tsx
 import React, { createContext, useContext, useMemo, useState } from "react";
 import { ImagePickerAsset } from "expo-image-picker";
 
-export type Role = "Driver" | "Operator" | "Both";
-
 export type RegisterState = {
-  // step 1
-  role: Role;
-
-  // step 2 uploads (no selfie here)
-  votersIDImage: ImagePickerAsset | null;
-  driversLicenseImage: ImagePickerAsset | null;
-  orcrImage: ImagePickerAsset | null;
-
-  // step 3 personal + selfie
-  selfieImage: ImagePickerAsset | null;
-
-  operatorFirstName: string;
-  operatorMiddleName: string;
-  operatorLastName: string;
-  operatorSuffix: string;
-  operatorBirthdate: string;
-  operatorPhone: string;
-
+  // Step 1: Personal Details
   driverFirstName: string;
   driverMiddleName: string;
   driverLastName: string;
@@ -30,41 +10,30 @@ export type RegisterState = {
   driverBirthdate: string;
   driverPhone: string;
 
+  // Step 2: Tricycle / Franchise Info + Driver's License
   experienceYears: string;
-
-  // step 4
   franchiseNumber: string;
   todaName: string;
   sector: string;
-  isLucenaVoter: string; // "Oo" | "Hindi"
-  votingLocation: string;
 
-  capacity: number; // 4 or 6
+  capacity: number;
   trikeColor: "yellow" | "green" | "";
   plateNumber: string;
 
-  // step 5
+  driversLicenseImage: ImagePickerAsset | null;
+
+  // Step 3: Mobile Verification + Selfie / Face Verification
+  mobileCode: string;
+  isMobileVerified: boolean;
+  selfieImage: ImagePickerAsset | null;
+
+  // Step 4: Account Submit
   email: string;
   password: string;
   confirmPassword: string;
 };
 
 const initial: RegisterState = {
-  role: "Driver",
-
-  votersIDImage: null,
-  driversLicenseImage: null,
-  orcrImage: null,
-
-  selfieImage: null,
-
-  operatorFirstName: "",
-  operatorMiddleName: "",
-  operatorLastName: "",
-  operatorSuffix: "",
-  operatorBirthdate: "",
-  operatorPhone: "",
-
   driverFirstName: "",
   driverMiddleName: "",
   driverLastName: "",
@@ -73,16 +42,19 @@ const initial: RegisterState = {
   driverPhone: "",
 
   experienceYears: "",
-
   franchiseNumber: "",
   todaName: "",
   sector: "",
-  isLucenaVoter: "",
-  votingLocation: "",
 
   capacity: 4,
   trikeColor: "",
   plateNumber: "",
+
+  driversLicenseImage: null,
+
+  mobileCode: "",
+  isMobileVerified: false,
+  selfieImage: null,
 
   email: "",
   password: "",
@@ -115,6 +87,10 @@ export function RegisterProvider({ children }: { children: React.ReactNode }) {
 
 export function useRegister() {
   const ctx = useContext(RegisterCtx);
-  if (!ctx) throw new Error("useRegister must be used inside RegisterProvider");
+
+  if (!ctx) {
+    throw new Error("useRegister must be used inside RegisterProvider");
+  }
+
   return ctx;
 }

@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import {API_BASE_URL} from "../../config"; // 🔥 make sure you have this
+import {API_BASE_URL} from "../../config"; 
 
 const { width } = Dimensions.get("window");
 

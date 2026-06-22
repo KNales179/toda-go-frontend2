@@ -34,9 +34,31 @@ export default function DNotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const navigation = useNavigation<any>();
 
+  const getResolvedDriverSession = async () => {
+    const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+      AsyncStorage.getItem("driverId"),
+      AsyncStorage.getItem("token"),
+      AsyncStorage.getItem("toda.auth"),
+    ]);
+
+    let todaAuth: any = null;
+    try {
+      todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+    } catch {}
+
+    const driverId = rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+    const token = rawToken || todaAuth?.token || null;
+
+    return {
+      driverId: driverId ? String(driverId) : null,
+      token: token ? String(token) : null,
+    };
+  };
+
   const markSeen = async (ids: string[]) => {
     if (!ids.length) return;
-    const token = await AsyncStorage.getItem("driverToken");
+    const session = await getResolvedDriverSession();
+    const token = session.token;
     if (!token) return;
 
     // per-id seen (safe even if you don’t have bulk endpoint)
@@ -54,8 +76,9 @@ export default function DNotificationsScreen() {
     try {
       setLoading(true);
 
-      const driverId = await AsyncStorage.getItem("driverId");
-      const token = await AsyncStorage.getItem("driverToken");
+      const session = await getResolvedDriverSession();
+      const driverId = session.driverId;
+      const token = session.token;
 
       if (!driverId || !token) {
         setNotifications([]);
@@ -117,11 +140,14 @@ export default function DNotificationsScreen() {
 
   const markAsRead = async (id: string) => {
     try {
-      const token = await AsyncStorage.getItem("driverToken");
+      const session = await getResolvedDriverSession();
+      const token = session.token;
 
       const res = await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, {
         method: "PATCH",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       let data: any = null;

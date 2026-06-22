@@ -64,6 +64,7 @@ export default function DProfile() {
   const navigation = useNavigation<any>();
 
   const [driverId, setDriverId] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<{
     name: string;
@@ -87,20 +88,45 @@ export default function DProfile() {
 
   // ---- load driver id ----
   useEffect(() => {
-    AsyncStorage.getItem("driverId").then(setDriverId);
+    (async () => {
+      const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+        AsyncStorage.getItem("driverId"),
+        AsyncStorage.getItem("token"),
+        AsyncStorage.getItem("toda.auth"),
+      ]);
+
+      let todaAuth: any = null;
+      try {
+        todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+      } catch {}
+
+      const resolvedDriverId =
+        rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+
+      const resolvedToken =
+        rawToken || todaAuth?.token || null;
+
+      setDriverId(resolvedDriverId ? String(resolvedDriverId) : null);
+      setToken(resolvedToken ? String(resolvedToken) : null);
+    })();
   }, []);
 
   // ---- fetchers ----
-  const fetchProfile = async (id: string) => {
-    const r = await fetch(`${API_BASE_URL}/api/stats/driver/${id}/profile`);
+  const fetchProfile = async (id: string, authToken: string) => {
+    const r = await fetch(`${API_BASE_URL}/api/stats/driver/${id}/profile`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "profile failed");
     setProfile(j);
   };
 
-  const fetchSummary = async (id: string, windowKey: WindowKey) => {
+  const fetchSummary = async (id: string, authToken: string, windowKey: WindowKey) => {
     const r = await fetch(
-      `${API_BASE_URL}/api/stats/driver/${id}/summary?window=${windowKey}`
+      `${API_BASE_URL}/api/stats/driver/${id}/summary?window=${windowKey}`,
+      {
+        headers: { Authorization: `Bearer ${authToken}` },
+      }
     );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "summary failed");
@@ -108,19 +134,25 @@ export default function DProfile() {
     setDaily(j.daily || []);
   };
 
-  const fetchMonthly = async (id: string) => {
+  const fetchMonthly = async (id: string, authToken: string) => {
     const year = new Date().getFullYear();
     const r = await fetch(
-      `${API_BASE_URL}/api/stats/driver/${id}/monthly?year=${year}`
+      `${API_BASE_URL}/api/stats/driver/${id}/monthly?year=${year}`,
+      {
+        headers: { Authorization: `Bearer ${authToken}`}
+      }
     );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "monthly failed");
     setMonthly(j.months || []);
   };
 
-  const fetchReport = async (id: string, windowKey: ReportKey) => {
+  const fetchReport = async (id: string, authToken: string, windowKey: ReportKey) => {
     const r = await fetch(
-      `${API_BASE_URL}/api/stats/driver/${id}/report?window=${windowKey}`
+      `${API_BASE_URL}/api/stats/driver/${id}/report?window=${windowKey}`,
+      {
+        headers: { Authorization: `Bearer ${authToken}` },
+      }
     );
     const j = await r.json();
     if (!r.ok) throw new Error(j?.message || "report failed");
@@ -130,8 +162,19 @@ export default function DProfile() {
   // ✅ notifications fetch (stable callback)
   const fetchUnseenCount = useCallback(async () => {
     try {
-      const id = await AsyncStorage.getItem("driverId");
-      const token = await AsyncStorage.getItem("driverToken");
+      const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+        AsyncStorage.getItem("driverId"),
+        AsyncStorage.getItem("token"),
+        AsyncStorage.getItem("toda.auth"),
+      ]);
+
+      let todaAuth: any = null;
+      try {
+        todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+      } catch {}
+
+      const id = rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+      const token = rawToken || todaAuth?.token || null;
 
       if (!id || !token) {
         setUnseenCount(0);
@@ -163,42 +206,40 @@ export default function DProfile() {
 
   // initial load for stats
   useEffect(() => {
-    if (!driverId) return;
+    if (!driverId || !token) return;
     (async () => {
       try {
         await Promise.all([
-          fetchProfile(driverId),
-          fetchSummary(driverId, win),
-          fetchMonthly(driverId),
-          fetchReport(driverId, reportWin),
+          fetchProfile(driverId, token),
+          fetchSummary(driverId, token, win),
+          fetchMonthly(driverId, token),
+          fetchReport(driverId, token, reportWin),
         ]);
       } catch (e: any) {
         Alert.alert("Stats", e.message || "Failed to load stats");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driverId]);
+  }, [driverId, token]);
 
   // refresh when summary window changes
   useEffect(() => {
-    if (!driverId) return;
-    fetchSummary(driverId, win).catch(() => {});
-  }, [win, driverId]);
+    if (!driverId || !token) return;
+    fetchSummary(driverId, token, win).catch(() => {});
+  }, [win, driverId, token]);
 
   // refresh when report window changes
   useEffect(() => {
-    if (!driverId) return;
-    fetchReport(driverId, reportWin).catch(() => {});
-  }, [reportWin, driverId]);
+    if (!driverId || !token) return;
+    fetchReport(driverId, token, reportWin).catch(() => {});
+  }, [reportWin, driverId, token]);
 
-  // ✅ refresh unseen when screen focuses
   useFocusEffect(
     useCallback(() => {
       fetchUnseenCount();
     }, [fetchUnseenCount])
   );
 
-  // ✅ optional: auto refresh every 10s while profile is alive
   useEffect(() => {
     const id = setInterval(() => {
       fetchUnseenCount();
@@ -209,7 +250,15 @@ export default function DProfile() {
   // ---- logout (AsyncStorage only) ----
   const handleLogout = async () => {
     try {
-      await AsyncStorage.multiRemove(["driverId", "driverToken"]); // ✅ your request
+      await AsyncStorage.multiRemove([
+        "role",
+        "userId",
+        "driverId",
+        "token",
+        "toda.auth",
+        "driverIsPresident",
+        "driverTodaPresName",
+      ]);
       Alert.alert("Logged out", "You have been logged out successfully.");
       router.replace("../../login_and_reg/dlogin");
     } catch (error: any) {

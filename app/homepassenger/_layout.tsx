@@ -22,10 +22,6 @@ const Stack = createNativeStackNavigator();
 function PassengerTabs() {
   const [unseenCount, setUnseenCount] = useState(0);
 
-  console.log("AUTH:PASSENGER_TABS:render", {
-    unseenCount,
-  });
-
   const getResolvedPassengerSession = useCallback(async () => {
     const [rawPassengerId, rawToken, rawTodaAuth] = await Promise.all([
       AsyncStorage.getItem("passengerId"),
@@ -38,9 +34,6 @@ function PassengerTabs() {
     try {
       todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
     } catch (e) {
-      console.log("AUTH:PASSENGER_TABS:getResolvedPassengerSession:parse_failed", {
-        rawTodaAuth,
-      });
     }
 
     const passengerId =
@@ -54,17 +47,6 @@ function PassengerTabs() {
       todaAuth?.token ||
       null;
 
-    console.log("AUTH:PASSENGER_TABS:getResolvedPassengerSession:resolved", {
-      rawPassengerId,
-      hasRawToken: !!rawToken,
-      hasTodaAuth: !!rawTodaAuth,
-      todaAuthUserId: todaAuth?.userId ?? null,
-      todaAuthPassengerId: todaAuth?.passengerId ?? null,
-      hasTodaAuthToken: !!todaAuth?.token,
-      passengerId,
-      hasToken: !!token,
-    });
-
     return { passengerId, token };
   }, []);
 
@@ -72,21 +54,12 @@ function PassengerTabs() {
     try {
       const { passengerId, token } = await getResolvedPassengerSession();
 
-      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:start", {
-        passengerId,
-        hasToken: !!token,
-      });
-
       if (
         !passengerId ||
         passengerId === "undefined" ||
         passengerId === "null" ||
         !token
       ) {
-        console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:missing_session", {
-          passengerId,
-          hasToken: !!token,
-        });
         setUnseenCount(0);
         return;
       }
@@ -94,8 +67,6 @@ function PassengerTabs() {
       const url =
         `${API_BASE_URL}/api/notifications` +
         `?userType=passenger&userId=${encodeURIComponent(passengerId)}`;
-
-      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:url", { url });
 
       const res = await fetch(url, {
         method: "GET",
@@ -107,12 +78,6 @@ function PassengerTabs() {
 
       const rawText = await res.text();
 
-      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:response", {
-        ok: res.ok,
-        status: res.status,
-        rawText,
-      });
-
       if (!res.ok) {
         setUnseenCount(0);
         return;
@@ -122,9 +87,6 @@ function PassengerTabs() {
       try {
         data = rawText ? JSON.parse(rawText) : null;
       } catch (e) {
-        console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:json_parse_failed", {
-          rawText,
-        });
         setUnseenCount(0);
         return;
       }
@@ -132,16 +94,8 @@ function PassengerTabs() {
       const list = Array.isArray(data?.items) ? data.items : [];
       const unseen = list.filter((n: any) => !n.seenAt).length;
 
-      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:parsed", {
-        total: list.length,
-        unseen,
-      });
-
       setUnseenCount(unseen);
     } catch (e: any) {
-      console.log("AUTH:PASSENGER_TABS:fetchUnseenCount:error", {
-        message: e?.message || String(e),
-      });
       setUnseenCount(0);
     }
   }, [getResolvedPassengerSession]);
@@ -197,16 +151,18 @@ function PassengerTabs() {
 
           return <Ionicons name={iconName as any} size={size} color={color} />;
         },
-        tabBarActiveTintColor: "black",
-        tabBarInactiveTintColor: "lightgray",
+        tabBarActiveTintColor: "#236685",
+        tabBarInactiveTintColor: "#a0a0a0",
         tabBarStyle: {
           borderTopLeftRadius: 30,
           borderTopRightRadius: 30,
           height: 70,
           borderWidth: 1,
-          borderColor: "black",
+          borderColor: "#0d5779",
           bottom: 0,
           paddingBottom: 0,
+          zIndex:99999,
+          overflow: "hidden",
         },
         tabBarLabelStyle: { fontSize: 12 },
       })}
@@ -220,7 +176,6 @@ function PassengerTabs() {
 }
 
 export default function PassengerStackLayout() {
-  console.log("AUTH:PASSENGER_LAYOUT:render");
 
   return (
     <AuthProvider>

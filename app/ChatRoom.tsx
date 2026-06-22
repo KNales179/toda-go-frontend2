@@ -93,9 +93,6 @@ export default function ChatRoom() {
     try {
       todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
     } catch (e) {
-      console.log("AUTH:CHATROOM:getResolvedSession:parse_failed", {
-        rawTodaAuth,
-      });
     }
 
     const resolvedUserId =
@@ -104,20 +101,6 @@ export default function ChatRoom() {
         : rawPassengerId || todaAuth?.userId || todaAuth?.passengerId || null;
 
     const resolvedToken = rawToken || todaAuth?.token || null;
-
-    console.log("AUTH:CHATROOM:getResolvedSession:resolved", {
-      role,
-      rawPassengerId,
-      rawDriverId,
-      hasRawToken: !!rawToken,
-      hasTodaAuth: !!rawTodaAuth,
-      todaAuthUserId: todaAuth?.userId ?? null,
-      todaAuthPassengerId: todaAuth?.passengerId ?? null,
-      todaAuthDriverId: todaAuth?.driverId ?? null,
-      hasTodaAuthToken: !!todaAuth?.token,
-      resolvedUserId,
-      hasToken: !!resolvedToken,
-    });
 
     return {
       userId:

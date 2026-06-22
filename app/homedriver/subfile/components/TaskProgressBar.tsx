@@ -1,3 +1,4 @@
+// TaskProgressBar.tsx
 import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import type { Task } from "../hooks/useDriverTasks";
@@ -116,7 +117,12 @@ export default function TaskProgressBar({
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 12, elevation: 2, bottom: -80},
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 16,
+    elevation: 6,
+  },
 
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { fontSize: 16, fontWeight: "800", marginBottom: 8 },

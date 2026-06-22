@@ -1,3 +1,4 @@
+// dhome.tsx
 import React, { useEffect, useState, useRef } from "react";
 import {
   View,
@@ -227,6 +228,43 @@ export default function DHome() {
   // ✅ NEW: tasks + pwApp hooks (auto poll when online)
   const tasks = useDriverTasks(driverId || "", isOnline);
   const pwapp = usePwApp(driverId || "", isOnline);
+  const driverPlanReqIdRef = useRef(0);
+  const lastDriverPlanVersionRef = useRef<string | null>(null);
+  const lastScheduledDriverPlanVersionRef = useRef<string | null>(null);
+  const driverPlanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const driverLocRef = useRef<LatLng | null>(null);
+  const activeLegReqIdRef = useRef(0);
+  const lastActiveLegKeyRef = useRef<string | null>(null);
+  const activeLegTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ Active-leg GPS reroute protection
+  // This makes the route follow the driver without spamming route requests.
+  const lastActiveLegRouteFromRef = useRef<LatLng | null>(null);
+  const lastActiveLegRouteAtRef = useRef(0);
+  const activeLegAutoRerouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Safe default: not heavy duty.
+  // You can lower these later if you want the route to update faster.
+  const DRIVER_ACTIVE_LEG_REROUTE_MIN_MOVE_M = 80;
+  const DRIVER_ACTIVE_LEG_REROUTE_MIN_INTERVAL = 30000;
+
+  // Matrix ranking protection
+  const matrixReqIdRef = useRef(0);
+  const lastMatrixAtRef = useRef(0);
+  const lastMatrixCenterRef = useRef<LatLng | null>(null);
+
+  // Snap / off-route protection
+  const currentDriverPlanRouteCoordsRef = useRef<LatLng[]>([]);
+  const lastSnapCheckAtRef = useRef(0);
+  const lastSnapCheckLocRef = useRef<LatLng | null>(null);
+  const offRouteRerouteCooldownUntilRef = useRef(0);
+
+  const offRouteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestOffRouteCandidateRef = useRef<LatLng | null>(null);
+
+  const OFF_ROUTE_DISTANCE_M = 80;
+  const OFF_ROUTE_CONFIRM_MS = 5000;
+  const OFF_ROUTE_REROUTE_COOLDOWN_MS = 60000;
 
   const bookingSeats = activeJobs.reduce((sum, job) => sum + (job.partySize || 1), 0);
   const pwActiveSeats = (pwapp.list || []).filter((p) => p.status === "ACTIVE").length;
@@ -277,7 +315,10 @@ export default function DHome() {
   const focusedJobState = focusedBooking ? (jobStateById[bookingKey(focusedBooking)] || defaultJobState) : defaultJobState;
   const showWorkflowCard = !!incomingBooking && !minimized && !focusedJobState.paymentConfirm;
   const isPickedUp = focusedJobState.pickedUp;
-  const showPaymentCard = !!focusedBooking && !minimized && focusedJobState.paymentConfirm;
+  const showPaymentCard =
+  !!focusedBooking &&
+  !minimized &&
+  focusedJobState.paymentConfirm;
   const showIncomingCard = !!focusedBooking && !dropoff && !confirmed && !minimized && !previewBooking;
 
   const pickDisplayName = (b: any, passengerProfile?: any) => {
@@ -317,9 +358,6 @@ export default function DHome() {
     try {
       todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
     } catch (e) {
-      console.log("AUTH:DHOME:getResolvedDriverSession:parse_failed", {
-        rawTodaAuth,
-      });
     }
 
     const resolvedDriverId =
@@ -328,16 +366,6 @@ export default function DHome() {
     const resolvedToken =
       rawToken || todaAuth?.token || null;
 
-    console.log("AUTH:DHOME:getResolvedDriverSession:resolved", {
-      rawDriverId,
-      hasRawToken: !!rawToken,
-      hasTodaAuth: !!rawTodaAuth,
-      todaAuthUserId: todaAuth?.userId ?? null,
-      todaAuthDriverId: todaAuth?.driverId ?? null,
-      hasTodaAuthToken: !!todaAuth?.token,
-      resolvedDriverId,
-      hasToken: !!resolvedToken,
-    });
 
     return {
       driverId:
@@ -361,14 +389,12 @@ export default function DHome() {
         const session = await getResolvedDriverSession();
 
         if (!session.driverId || !session.token) {
-          console.log("AUTH:DHOME:missing_session", session);
           return; // don't instantly logout
         }
 
         setDriverId(session.driverId);
         setToken(session.token);
       } catch (e) {
-        console.log("AUTH:DHOME:session_error", e);
       }
     };
 
@@ -465,6 +491,392 @@ export default function DHome() {
     return 2 * R * Math.asin(Math.sqrt(s));
   };
 
+  const buildActiveLegKey = (activeTask: any) => {
+    const taskId = String(activeTask?._id || "");
+    const sourceId = String(activeTask?.sourceId || "");
+    const taskType = String(activeTask?.taskType || "").toUpperCase();
+    const taskLat = Number(activeTask?.lat);
+    const taskLng = Number(activeTask?.lng);
+
+    if (!taskId) return null;
+
+    if (!Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+      return null;
+    }
+
+    return [
+      taskId,
+      sourceId,
+      taskType,
+      taskLat.toFixed(6),
+      taskLng.toFixed(6),
+    ].join("|");
+  };
+
+  const resetActiveLegRouteTracking = () => {
+    lastActiveLegKeyRef.current = null;
+    lastActiveLegRouteFromRef.current = null;
+    lastActiveLegRouteAtRef.current = 0;
+    currentDriverPlanRouteCoordsRef.current = [];
+
+    if (activeLegTimerRef.current) {
+      clearTimeout(activeLegTimerRef.current);
+      activeLegTimerRef.current = null;
+    }
+
+    if (activeLegAutoRerouteTimerRef.current) {
+      clearTimeout(activeLegAutoRerouteTimerRef.current);
+      activeLegAutoRerouteTimerRef.current = null;
+    }
+  };
+
+  const maybeRankWaitingBookingsWithMatrix = async (
+    center: LatLng,
+    bookings: any[]
+  ) => {
+    if (!token || !driverId) return bookings;
+    if (!Array.isArray(bookings) || bookings.length <= 1) return bookings;
+
+    const nowMs = Date.now();
+
+    const movedFromLastMatrix = lastMatrixCenterRef.current
+      ? haversineMeters(lastMatrixCenterRef.current, center)
+      : Infinity;
+
+    // Do not call Matrix too often.
+    // This protects ORS Matrix from spam while driver GPS moves.
+    if (nowMs - lastMatrixAtRef.current < 20000 && movedFromLastMatrix < 300) {
+      return bookings;
+    }
+
+    const candidates = bookings
+      .filter((b: any) => {
+        const lat = Number(b?.pickup?.lat);
+        const lng = Number(b?.pickup?.lng);
+        return (
+          Number.isFinite(lat) &&
+          lat >= -90 &&
+          lat <= 90 &&
+          Number.isFinite(lng) &&
+          lng >= -180 &&
+          lng <= 180
+        );
+      })
+      .slice(0, 10);
+
+    if (candidates.length <= 1) return bookings;
+
+    const reqId = ++matrixReqIdRef.current;
+
+    try {
+      lastMatrixAtRef.current = nowMs;
+      lastMatrixCenterRef.current = center;
+
+      const locations = [
+        [center.lng, center.lat],
+        ...candidates.map((b: any) => [
+          Number(b.pickup.lng),
+          Number(b.pickup.lat),
+        ]),
+      ];
+
+      const res = await fetch(`${API_BASE_URL}/api/route/matrix`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          locations,
+          sources: [0],
+          destinations: candidates.map((_: any, i: number) => i + 1),
+          metrics: ["distance", "duration"],
+          units: "km",
+          priority: 3,
+          replaceable: true,
+          replaceKey: `matrix-waiting:${driverId}`,
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (reqId !== matrixReqIdRef.current) return bookings;
+      if (!res.ok || !json?.data) return bookings;
+
+      const distances = json.data?.distances?.[0] || [];
+      const durations = json.data?.durations?.[0] || [];
+
+      const rankedCandidates = candidates
+        .map((b: any, index: number) => ({
+          ...b,
+          matrixDistanceKm:
+            typeof distances[index] === "number" ? distances[index] : null,
+          matrixDurationSec:
+            typeof durations[index] === "number" ? durations[index] : null,
+        }))
+        .sort((a: any, b: any) => {
+          const ad =
+            typeof a.matrixDistanceKm === "number"
+              ? a.matrixDistanceKm
+              : Infinity;
+          const bd =
+            typeof b.matrixDistanceKm === "number"
+              ? b.matrixDistanceKm
+              : Infinity;
+
+          return ad - bd;
+        });
+
+      const rankedIds = new Set(rankedCandidates.map((b: any) => String(b.id)));
+
+      const leftovers = bookings.filter(
+        (b: any) => !rankedIds.has(String(b.id))
+      );
+
+      return [...rankedCandidates, ...leftovers];
+    } catch (e) {
+      console.log("[DHOME:matrix] failed:", e);
+      return bookings;
+    }
+  };
+
+  function distancePointToSegmentMeters(p: LatLng, a: LatLng, b: LatLng) {
+    const lat0 = p.lat;
+    const lng0 = p.lng;
+
+    const metersPerDegLat = 111320;
+    const metersPerDegLng = 111320 * Math.cos((lat0 * Math.PI) / 180);
+
+    const px = (p.lng - lng0) * metersPerDegLng;
+    const py = (p.lat - lat0) * metersPerDegLat;
+
+    const ax = (a.lng - lng0) * metersPerDegLng;
+    const ay = (a.lat - lat0) * metersPerDegLat;
+
+    const bx = (b.lng - lng0) * metersPerDegLng;
+    const by = (b.lat - lat0) * metersPerDegLat;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+
+    if (dx === 0 && dy === 0) {
+      return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
+    }
+
+    const t = Math.max(
+      0,
+      Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy))
+    );
+
+    const cx = ax + t * dx;
+    const cy = ay + t * dy;
+
+    return Math.sqrt((px - cx) ** 2 + (py - cy) ** 2);
+  }
+
+  function distanceToRouteMeters(p: LatLng, route: LatLng[]) {
+    if (!Array.isArray(route) || route.length < 2) return Infinity;
+
+    let best = Infinity;
+
+    for (let i = 0; i < route.length - 1; i++) {
+      const d = distancePointToSegmentMeters(p, route[i], route[i + 1]);
+      if (d < best) best = d;
+    }
+
+    return best;
+  }
+
+  const maybeConfirmOffRouteAndReroute = (loc: LatLng) => {
+    if (!isOnline || !driverId || !token) return;
+
+    const routeCoords = currentDriverPlanRouteCoordsRef.current;
+
+    if (!Array.isArray(routeCoords) || routeCoords.length < 2) return;
+
+    const nowMs = Date.now();
+
+    if (nowMs < offRouteRerouteCooldownUntilRef.current) return;
+
+    const distanceFromRoute = distanceToRouteMeters(loc, routeCoords);
+
+    // ✅ Still near route. Cancel pending reroute confirmation.
+    if (distanceFromRoute <= OFF_ROUTE_DISTANCE_M) {
+      latestOffRouteCandidateRef.current = null;
+
+      if (offRouteConfirmTimerRef.current) {
+        clearTimeout(offRouteConfirmTimerRef.current);
+        offRouteConfirmTimerRef.current = null;
+      }
+
+      return;
+    }
+
+    // ✅ Possible off-route. Wait before trusting it.
+    latestOffRouteCandidateRef.current = loc;
+
+    if (offRouteConfirmTimerRef.current) return;
+
+    offRouteConfirmTimerRef.current = setTimeout(() => {
+      offRouteConfirmTimerRef.current = null;
+
+      const latestLoc = driverLocRef.current || latestOffRouteCandidateRef.current;
+      if (!latestLoc) return;
+
+      const latestRouteCoords = currentDriverPlanRouteCoordsRef.current;
+
+      if (!Array.isArray(latestRouteCoords) || latestRouteCoords.length < 2) {
+        return;
+      }
+
+      const stillOffRoute =
+        distanceToRouteMeters(latestLoc, latestRouteCoords) > OFF_ROUTE_DISTANCE_M;
+
+      // ✅ GPS corrected itself or driver returned to route.
+      if (!stillOffRoute) {
+        latestOffRouteCandidateRef.current = null;
+        return;
+      }
+
+      const activeTask = tasks.active?.[0] || null;
+      if (!activeTask) return;
+
+      const baseLegKey = buildActiveLegKey(activeTask);
+      if (!baseLegKey) return;
+
+      offRouteRerouteCooldownUntilRef.current =
+        Date.now() + OFF_ROUTE_REROUTE_COOLDOWN_MS;
+
+      const rerouteLegKey = `${baseLegKey}|offroute|${Date.now()}`;
+
+      // ✅ Force one fresh route from current driver position.
+      lastActiveLegKeyRef.current = rerouteLegKey;
+      lastActiveLegRouteFromRef.current = null;
+      lastActiveLegRouteAtRef.current = 0;
+
+      fetchActiveLegRoute(activeTask, rerouteLegKey);
+    }, OFF_ROUTE_CONFIRM_MS);
+  };
+
+  const snapDriverLocation = async (loc: LatLng) => {
+    if (!token) return loc;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/route/snap`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          locations: [[loc.lng, loc.lat]],
+          radius: 350,
+          priority: 4,
+          replaceable: true,
+          replaceKey: driverId ? `snap-driver:${driverId}` : "snap-driver",
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) return loc;
+
+      const snapped = json?.data?.locations?.[0]?.location;
+
+      if (
+        Array.isArray(snapped) &&
+        typeof snapped[0] === "number" &&
+        typeof snapped[1] === "number"
+      ) {
+        return {
+          lng: snapped[0],
+          lat: snapped[1],
+        };
+      }
+
+      return loc;
+    } catch (e) {
+      console.log("[DHOME:snap] failed:", e);
+      return loc;
+    }
+  };
+
+  const maybeCheckOffRouteWithSnap = async (loc: LatLng) => {
+    if (!isOnline || !driverId || !token) return;
+
+    const routeCoords = currentDriverPlanRouteCoordsRef.current;
+
+    if (!Array.isArray(routeCoords) || routeCoords.length < 2) return;
+
+    const nowMs = Date.now();
+
+    if (nowMs < offRouteRerouteCooldownUntilRef.current) return;
+
+    const moved = lastSnapCheckLocRef.current
+      ? haversineMeters(lastSnapCheckLocRef.current, loc)
+      : Infinity;
+
+    // Do not snap/check every GPS tick.
+    if (nowMs - lastSnapCheckAtRef.current < 45000 && moved < 150) {
+      return;
+    }
+
+    lastSnapCheckAtRef.current = nowMs;
+    lastSnapCheckLocRef.current = loc;
+
+    const snappedLoc = await snapDriverLocation(loc);
+    const distanceFromRoute = distanceToRouteMeters(snappedLoc, routeCoords);
+
+    if (distanceFromRoute <= 80) {
+      return;
+    }
+
+    const planTasks = buildDriverPlanTasks();
+    if (!planTasks.length) return;
+
+    const planVersion = buildDriverPlanVersion(planTasks);
+
+    console.log("[DHOME:off-route] driver appears off-route", {
+      distanceFromRoute,
+      planVersion,
+    });
+
+    // Cooldown so off-route does not spam route requests.
+    offRouteRerouteCooldownUntilRef.current = nowMs + 60000;
+
+    // Force one fresh driver-plan route using current driver location.
+    lastDriverPlanVersionRef.current = null;
+    lastScheduledDriverPlanVersionRef.current = null;
+
+    const activeTask = tasks.active?.[0] || null;
+    if (activeTask) {
+      const taskId = String(activeTask._id || "");
+      const sourceId = String(activeTask.sourceId || "");
+      const taskType = String(activeTask.taskType || "").toUpperCase();
+      const taskLat = Number(activeTask.lat);
+      const taskLng = Number(activeTask.lng);
+
+      if (
+        !Number.isFinite(taskLat) ||
+        !Number.isFinite(taskLng)
+      ) {
+        return;
+      }
+      const legKey = [
+        taskId,
+        sourceId,
+        taskType,
+        taskLat.toFixed(6),
+        taskLng.toFixed(6),
+        "offroute",
+        Date.now(),
+      ].join("|");
+
+      lastActiveLegKeyRef.current = legKey;
+      fetchActiveLegRoute(activeTask, legKey);
+    }
+  };
+
   useEffect(() => {
     if (!driverLoc && location) {
       const seeded = { lat: location.latitude, lng: location.longitude };
@@ -472,6 +884,10 @@ export default function DHome() {
       sendToMap({ type: "updateDriver", latitude: seeded.lat, longitude: seeded.lng });
     }
   }, [location, isOnline]);
+
+  useEffect(() => {
+    driverLocRef.current = driverLoc;
+  }, [driverLoc]);
 
   useEffect(() => {
     if (!driverLoc && !todas.length) {
@@ -558,6 +974,283 @@ export default function DHome() {
     }
   };
 
+  const buildDriverPlanTasks = () => {
+    const ordered = [
+      ...(tasks.active || []),
+      ...(tasks.pending || []),
+    ];
+
+    return ordered
+      .filter((t: any) => {
+        const lat = Number(t?.lat);
+        const lng = Number(t?.lng);
+
+        return (
+          Number.isFinite(lat) &&
+          lat >= -90 &&
+          lat <= 90 &&
+          Number.isFinite(lng) &&
+          lng >= -180 &&
+          lng <= 180 &&
+          ["PICKUP", "DROPOFF"].includes(String(t?.taskType || "").toUpperCase())
+        );
+      })
+      .map((t: any) => ({
+        taskId: String(t._id || ""),
+        sourceType: t.sourceType,
+        taskType: String(t.taskType).toUpperCase(),
+        bookingId: String(t.sourceId || t.bookingId || t._id || ""),
+        lat: Number(t.lat),
+        lng: Number(t.lng),
+        place: t.place || "",
+        status: t.status,
+      }));
+  };
+
+  const buildDriverPlanVersion = (planTasks: any[]) => {
+    return planTasks
+      .map((t) => {
+        const shortType = t.taskType === "PICKUP" ? "P" : "D";
+        return `${shortType}:${t.sourceType || "TASK"}:${t.bookingId || t.taskId}`;
+      })
+      .join("|");
+  };
+
+  const fetchDriverPlanRoute = async (planTasks: any[], planVersion: string) => {
+    const currentDriverLoc = driverLocRef.current || driverLoc;
+
+    if (!currentDriverLoc || !driverId || !token) return;
+
+    const reqId = ++driverPlanReqIdRef.current;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/route/driver-plan`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          driverId,
+          currentLocation: {
+            lat: currentDriverLoc.lat,
+            lng: currentDriverLoc.lng,
+          },
+          tasks: planTasks,
+          planVersion,
+          priority: 1,
+          replaceable: true,
+        }),
+      });
+
+      const text = await res.text();
+
+      let geo: any = null;
+      try {
+        geo = JSON.parse(text);
+      } catch {
+        console.log("[DHOME:driver-plan] non-JSON:", text.slice(0, 300));
+        return;
+      }
+
+      if (res.status === 409) {
+        // Older queued driver-plan was replaced by a newer one.
+        return;
+      }
+
+      if (!res.ok) {
+        console.log("[DHOME:driver-plan] failed:", res.status, geo);
+        return;
+      }
+
+      if (reqId !== driverPlanReqIdRef.current) {
+        return;
+      }
+
+      const returnedPlanVersion =
+        geo?.metadata?.planVersion ||
+        geo?.features?.[0]?.properties?.planVersion ||
+        null;
+
+      if (returnedPlanVersion && String(returnedPlanVersion) !== String(planVersion)) {
+        return;
+      }
+
+      const feat = geo?.features?.[0];
+      const coordinates = feat?.geometry?.coordinates || [];
+
+      if (!Array.isArray(coordinates) || !coordinates.length) {
+        console.log("[DHOME:driver-plan] no coordinates");
+        return;
+      }
+
+      const wayPoints = Array.isArray(feat?.properties?.way_points)
+        ? feat.properties.way_points
+        : [];
+
+      const segments = Array.isArray(feat?.properties?.segments)
+        ? feat.properties.segments
+        : [];
+
+      // Draw only the CURRENT ACTIVE LEG.
+      // Example: driver/current → active task.
+      // The full backend plan may include many stops, but the map should stay clean.
+      const activeStartIndex =
+        typeof wayPoints[0] === "number" ? wayPoints[0] : 0;
+
+      const activeEndIndex =
+        typeof wayPoints[1] === "number"
+          ? wayPoints[1]
+          : coordinates.length - 1;
+
+      let activeLegCoordinates = coordinates.slice(
+        activeStartIndex,
+        activeEndIndex + 1
+      );
+
+      // Safety fallback: if ORS way_points are missing/weird, draw full route.
+      if (!Array.isArray(activeLegCoordinates) || activeLegCoordinates.length < 2) {
+        activeLegCoordinates = coordinates;
+      }
+
+      const coords = activeLegCoordinates.map(([lng, lat]: number[]) => [lat, lng]);
+
+      const routeCoordsForDistance = activeLegCoordinates.map(([lng, lat]: number[]) => ({
+        lat,
+        lng,
+      }));
+
+      currentDriverPlanRouteCoordsRef.current = routeCoordsForDistance;
+
+      const activeSegment = segments[0] || {};
+      const fullSummary = feat?.properties?.summary || {};
+
+      sendToMap({
+        type: "drawRoute",
+        coords,
+        summary: {
+          distance: Number(activeSegment.distance || fullSummary.distance || 0),
+          duration: Number(activeSegment.duration || fullSummary.duration || 0),
+        },
+        routeType: "driver-active-leg",
+        planVersion,
+      });
+    } catch (e) {
+      console.log("[DHOME:driver-plan] error:", e);
+    }
+  };
+
+  const fetchActiveLegRoute = async (activeTask: any, legKey: string) => {
+    const currentDriverLoc = driverLocRef.current || driverLoc;
+
+    if (!currentDriverLoc || !activeTask || !driverId || !token) return;
+
+    const taskLat = Number(activeTask.lat);
+    const taskLng = Number(activeTask.lng);
+
+    if (
+      !Number.isFinite(taskLat) ||
+      !Number.isFinite(taskLng) ||
+      taskLat < -90 ||
+      taskLat > 90 ||
+      taskLng < -180 ||
+      taskLng > 180
+    ) {
+      console.log("[DHOME:active-leg] invalid active task coords", activeTask);
+      return;
+    }
+
+    const reqId = ++activeLegReqIdRef.current;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/route`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          start: [currentDriverLoc.lng, currentDriverLoc.lat],
+          end: [taskLng, taskLat],
+          priority: 1,
+          replaceable: true,
+          replaceKey: `driver-active-leg:${driverId}`,
+        }),
+      });
+
+      const text = await res.text();
+
+      let geo: any = null;
+      try {
+        geo = JSON.parse(text);
+      } catch {
+        console.log("[DHOME:active-leg] non-JSON:", text.slice(0, 300));
+        return;
+      }
+
+      if (res.status === 409) {
+        return;
+      }
+
+      if (!res.ok) {
+        console.log("[DHOME:active-leg] failed:", res.status, geo);
+        return;
+      }
+
+      if (reqId !== activeLegReqIdRef.current) {
+        return;
+      }
+
+      if (lastActiveLegKeyRef.current !== legKey) {
+        return;
+      }
+
+      const feat = geo?.features?.[0];
+      const coordinates = feat?.geometry?.coordinates || [];
+
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        console.log("[DHOME:active-leg] no coordinates");
+        return;
+      }
+
+      const coords = coordinates.map(([lng, lat]: number[]) => [lat, lng]);
+
+      currentDriverPlanRouteCoordsRef.current = coordinates.map(
+        ([lng, lat]: number[]) => ({
+          lat,
+          lng,
+        })
+      );
+
+      // ✅ Remember where this route was calculated from.
+      // GPS movement will compare against this before requesting again.
+      lastActiveLegRouteFromRef.current = {
+        lat: currentDriverLoc.lat,
+        lng: currentDriverLoc.lng,
+      };
+
+      lastActiveLegRouteAtRef.current = Date.now();
+
+      const summary = feat?.properties?.summary || {};
+
+      // ✅ Do not manually clear here.
+      // driverMapHtml drawRoute() already replaces the old route.
+      // This avoids route blinking during auto-reroute.
+      sendToMap({
+        type: "drawRoute",
+        coords,
+        summary: {
+          distance: Number(summary.distance || 0),
+          duration: Number(summary.duration || 0),
+        },
+        routeType: "driver-active-leg",
+        legKey,
+      });
+    } catch (e) {
+      console.log("[DHOME:active-leg] error:", e);
+    }
+  };
+
   // fetch driver capacity once online
   useEffect(() => {
     (async () => {
@@ -629,8 +1322,19 @@ export default function DHome() {
 
   // build map html
   useEffect(() => {
-    if (!location || mapHtml) return;
-    const html = buildDriverMapHtml(location.latitude, location.longitude);
+    if (mapHtml) return;
+
+    const lat =
+      typeof location?.latitude === "number"
+        ? location.latitude
+        : 13.9414;
+
+    const lng =
+      typeof location?.longitude === "number"
+        ? location.longitude
+        : 121.6236;
+
+    const html = buildDriverMapHtml(lat, lng);
     setMapHtml(html);
   }, [location, mapHtml]);
 
@@ -655,9 +1359,9 @@ export default function DHome() {
 
       sub = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 1000,
-          distanceInterval: 5,
+          accuracy: Location.Accuracy.High,
+          timeInterval: 1500,
+          distanceInterval: 1,
         },
         (pos) => {
           const { latitude, longitude, accuracy } = pos.coords;
@@ -666,7 +1370,13 @@ export default function DHome() {
 
           const loc = { lat: latitude, lng: longitude };
           setDriverLoc(loc);
+          driverLocRef.current = loc;
+
           sendToMap({ type: "updateDriver", latitude: loc.lat, longitude: loc.lng });
+
+          // ✅ Fast visual following is handled inside driverMapHtml.ts by local trimming.
+          // Fresh backend route is requested only if driver stays off-route for 5 seconds.
+          maybeConfirmOffRouteAndReroute(loc);
         }
       );
     };
@@ -675,30 +1385,103 @@ export default function DHome() {
     return () => sub?.remove();
   }, [isOnline]);
 
-  // ✅ draw route to ACTIVE task target
+  // ✅ Draw only the CURRENT ACTIVE TASK route.
+  // This runs when the active task changes, or when GPS becomes available.
   useEffect(() => {
-    const run = async () => {
-      if (!isOnline) return;
-      if (!driverLoc) return;
+    if (!isOnline) {
+      resetActiveLegRouteTracking();
+      sendToMap({ type: "clearRoute" });
+      return;
+    }
 
-      const activeTask = tasks.active?.[0] || null;
-      if (!activeTask) {
-        sendToMap({ type: "clearRoute" });
-        return;
+    if (!driverId || !token) return;
+
+    const currentDriverLoc = driverLocRef.current || driverLoc;
+    if (!currentDriverLoc) return;
+
+    const activeTask = tasks.active?.[0] || null;
+
+    if (!activeTask) {
+      resetActiveLegRouteTracking();
+      sendToMap({ type: "clearRoute" });
+      return;
+    }
+
+    const legKey = buildActiveLegKey(activeTask);
+    if (!legKey) return;
+
+    // Same active task. Do not request here.
+    // GPS-follow reroute is handled by the next useEffect.
+    if (lastActiveLegKeyRef.current === legKey) {
+      return;
+    }
+
+    // ✅ New active task means new route.
+    lastActiveLegKeyRef.current = legKey;
+    lastActiveLegRouteFromRef.current = null;
+    lastActiveLegRouteAtRef.current = 0;
+    currentDriverPlanRouteCoordsRef.current = [];
+
+    if (activeLegTimerRef.current) {
+      clearTimeout(activeLegTimerRef.current);
+    }
+
+    if (activeLegAutoRerouteTimerRef.current) {
+      clearTimeout(activeLegAutoRerouteTimerRef.current);
+      activeLegAutoRerouteTimerRef.current = null;
+    }
+
+    // ✅ Clear only when task changes.
+    // Example: pickup route changes to dropoff route.
+    sendToMap({ type: "clearRoute" });
+
+    activeLegTimerRef.current = setTimeout(() => {
+      fetchActiveLegRoute(activeTask, legKey);
+    }, 800);
+
+    return () => {
+      if (activeLegTimerRef.current) {
+        clearTimeout(activeLegTimerRef.current);
+        activeLegTimerRef.current = null;
       }
-
-      const to = { lat: activeTask.lat, lng: activeTask.lng } as LatLng;
-
-      // small jitter guard
-      const d = haversineMeters(driverLoc, to);
-      if (d < 8) return;
-
-      await routeAndDraw(driverLoc, to);
     };
+  }, [isOnline, driverId, token, tasks.active, driverLoc, mapReady]);
 
-    run();
-  }, [isOnline, driverLoc, tasks.active]);
+  // ✅ GPS-follow reroute for the SAME active task.
+  // NOTE:
+  // Normal driver movement should NOT request /api/route.
+  // The route visually follows the driver through local trimming in driverMapHtml.ts.
+  // Real route recalculation is handled only by maybeConfirmOffRouteAndReroute().
+  useEffect(() => {
+    if (!isOnline || !driverId || !token) return;
 
+    const currentDriverLoc = driverLocRef.current || driverLoc;
+    if (!currentDriverLoc) return;
+
+    const activeTask = tasks.active?.[0] || null;
+    if (!activeTask) return;
+
+    const legKey = buildActiveLegKey(activeTask);
+    if (!legKey) return;
+
+    // If active-task route has not been initialized yet,
+    // let the main active-task effect handle the first route.
+    if (lastActiveLegKeyRef.current !== legKey) {
+      return;
+    }
+
+    const lastRouteFrom = lastActiveLegRouteFromRef.current;
+
+    // If no successful route has been drawn yet, do not auto-reroute.
+    // The first route request is handled by the main active-task effect.
+    if (!lastRouteFrom) return;
+
+    // ✅ Stop here.
+    // Do not request a fresh route just because the driver moved.
+    // driverMapHtml.ts will trim the existing stored route locally.
+    return;
+  }, [isOnline, driverId, token, driverLoc, tasks.active]);
+  
   const sendHeartbeat = async () => {
     try {
       if (!driverId || !token) return;
@@ -816,6 +1599,8 @@ export default function DHome() {
               ...b,
               id, // ✅ normalize
               displayName: b.bookedFor && b.riderName ? b.riderName : b.passengerName || "Passenger",
+              driverPayment: b.driverPayment || null,
+              paymentStatus: b.paymentStatus || "none",
             };
           })
           .filter((b: any) => !!b.id);
@@ -865,11 +1650,25 @@ export default function DHome() {
 
         const chosenId = bookingKey(chosen);
         bookingIdRef.current = chosenId;
-        setJobStateById((prev) => ({
-          ...prev,
-          [chosenId]: prev[chosenId] || defaultJobState,
-        }));
-        
+
+        setJobStateById((prev) => {
+          const existing = prev[chosenId];
+
+          // ✅ AUTO RESTORE LOGIC
+          const shouldBePayment =
+            chosen?.paymentStatus === "paid";
+
+          return {
+            ...prev,
+            [chosenId]: existing || {
+              ...defaultJobState,
+              paymentConfirm: shouldBePayment, // 🔥 FIX
+              pickedUp: chosen?.status === "enroute" || shouldBePayment,
+              phase: shouldBePayment ? "toDropoff" : "toPickup",
+            },
+          };
+        });
+                
       } catch (err) {
         console.error("❌ Failed to fetch booking:", err);
       }
@@ -1167,7 +1966,9 @@ export default function DHome() {
           return;
         }
 
-        const list = data as any[];
+        const rawList = data as any[];
+        const list = await maybeRankWaitingBookingsWithMatrix(center, rawList);
+
         setQueue(list);
 
         if (previewBooking && !list.some((q: any) => String(q.id) === String(previewBooking.id))) {
@@ -1181,7 +1982,11 @@ export default function DHome() {
               id: q.id,
               lat: q.pickup.lat,
               lng: q.pickup.lng,
+              destinationLat: q.destination?.lat,
+              destinationLng: q.destination?.lng,
               bookingType: q.bookingType || "CLASSIC",
+              matrixDistanceKm: q.matrixDistanceKm ?? null,
+              matrixDurationSec: q.matrixDurationSec ?? null,
             })),
           })
         );
@@ -1266,11 +2071,29 @@ export default function DHome() {
     return b;
   }
 
-  function applyPickedUpForBookingId(bookingId: string) {
+  async function applyPickedUpForBookingId(bookingId: string) {
     setJobStateById((prev) => ({
       ...prev,
-      [bookingId]: { ...(prev[bookingId] || defaultJobState), pickedUp: true, phase: "toDropoff" },
+      [bookingId]: {
+        ...(prev[bookingId] || defaultJobState),
+        pickedUp: true,
+        phase: "toDropoff",
+      },
     }));
+
+    try {
+      if (!token) return;
+
+      await fetch(`${API_BASE_URL}/api/booking/${bookingId}/pickup-complete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (e) {
+      console.log("❌ pickup-complete failed", e);
+    }
   }
 
   function applyDropoffForBookingId(bookingId: string) {
@@ -1285,13 +2108,10 @@ export default function DHome() {
     }));
   }
 
-  const markPickedUp = () => {
+  const markPickedUp = async () => {
     if (!incomingBooking?.id) return;
     const id = String(incomingBooking.id);
-    setJobStateById((prev) => ({
-      ...prev,
-      [id]: { ...(prev[id] || defaultJobState), pickedUp: true, phase: "toDropoff" },
-    }));
+    await applyPickedUpForBookingId(id);
   };
 
   const markDropOff = () => {
@@ -1313,7 +2133,49 @@ export default function DHome() {
         return;
       }
 
-      dbg("DHOME:confirmPayment", { bookingId: idToComplete });
+      const currentDriverLoc = driverLocRef.current || driverLoc;
+
+      console.log("🧪 [DHOME confirmPayment BEFORE]", {
+        idToComplete: String(idToComplete),
+        bookingIdRef: bookingIdRef.current,
+        incomingBookingId: incomingBooking?.id,
+        incomingBookingBookingId: incomingBooking?.bookingId,
+        activeBookingId,
+        focusedBookingId: focusedBooking?.id,
+        driverLoc: currentDriverLoc,
+        activeJobs: activeJobs.map((j) => ({
+          id: j.id,
+          bookingId: j.bookingId,
+          name: j.displayName || j.passengerName,
+          status: j.status,
+          progressStatus: j.progressStatus,
+          paymentStatus: j.paymentStatus,
+        })),
+        activeTasks: tasks.active.map((t) => ({
+          id: t._id,
+          sourceId: t.sourceId,
+          sourceType: t.sourceType,
+          type: t.taskType,
+          status: t.status,
+          dependsOnTaskId: t.dependsOnTaskId,
+        })),
+        pendingTasks: tasks.pending.map((t) => ({
+          id: t._id,
+          sourceId: t.sourceId,
+          sourceType: t.sourceType,
+          type: t.taskType,
+          status: t.status,
+          dependsOnTaskId: t.dependsOnTaskId,
+        })),
+      });
+
+      dbg("DHOME:confirmPayment", {
+        bookingId: idToComplete,
+        driverLat: currentDriverLoc?.lat,
+        driverLng: currentDriverLoc?.lng,
+        activeTaskIds: tasks.active.map((t) => t._id),
+        pendingTaskIds: tasks.pending.map((t) => t._id),
+      });
 
       if (!token) {
         Alert.alert("Session expired", "Please log in again.");
@@ -1326,10 +2188,36 @@ export default function DHome() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ bookingId: idToComplete }),
+        body: JSON.stringify({
+          bookingId: idToComplete,
+          driverLat: currentDriverLoc?.lat,
+          driverLng: currentDriverLoc?.lng,
+        }),
+      });
+
+      const responseText = await res.text();
+      let responseJson: any = null;
+
+      try {
+        responseJson = JSON.parse(responseText);
+      } catch {}
+
+      console.log("🧪 [DHOME confirmPayment RESPONSE]", {
+        ok: res.ok,
+        status: res.status,
+        idToComplete: String(idToComplete),
+        responseJson,
+        responseText: responseText.slice(0, 800),
       });
 
       if (res.ok) {
+        await tasks.refresh();
+
+        console.log("🧪 [DHOME confirmPayment AFTER TASK REFRESH]", {
+          completedBookingId: String(idToComplete),
+          backendDebug: responseJson?.debug || null,
+        });
+
         Alert.alert("Payment Confirmed", "Transaction completed!");
 
         const idStr = String(idToComplete);
@@ -1353,7 +2241,7 @@ export default function DHome() {
 
         setIncomingBooking(() => null);
       } else {
-        Alert.alert("❌ Error", "Failed to mark booking as complete.");
+        Alert.alert("❌ Error", responseJson?.message || "Failed to mark booking as complete.");
       }
     } catch (error) {
       console.error("❌ Error confirming payment:", error);
@@ -1389,47 +2277,102 @@ export default function DHome() {
             try {
               const msg = JSON.parse(e.nativeEvent.data);
 
+              if (msg?.type === "mapReady") {
+                setMapReady(true);
+                return;
+              }
+
+              if (msg?.type === "error") {
+                Alert.alert(
+                  "Map error",
+                  String(msg.error || msg.msg || "Unknown map error")
+                );
+                return;
+              }
+
               if (msg?.type === "waitingMarkerTapped") {
                 if (isFull) {
                   Alert.alert("Capacity full", "You’ve reached your passenger limit.");
                   return;
                 }
+
                 const q = queue.find((x) => String(x.id) === String(msg.bookingId));
+
                 if (q) {
                   (async () => {
-                    const pickupLabel = await getPlaceLabel(q.pickup.lat, q.pickup.lng);
-                    const destinationLabel = await getPlaceLabel(q.destination.lat, q.destination.lng);
+                    const pickupLabel =
+                      q.pickupPlace ||
+                      (await getPlaceLabel(q.pickup.lat, q.pickup.lng));
 
-                    setPreviewBooking({
+                    const destinationLabel =
+                      q.destinationPlace ||
+                      (await getPlaceLabel(q.destination.lat, q.destination.lng));
+
+                    const bookedFor = !!q.passengerPreview?.bookedFor;
+                    const riderName = String(q.passengerPreview?.riderName || "").trim();
+                    const accountName = String(q.passengerPreview?.name || "Passenger").trim();
+
+                    const displayName =
+                      bookedFor && riderName
+                        ? riderName
+                        : accountName;
+
+                    const preview = {
                       id: q.id,
                       pickupLat: q.pickup.lat,
                       pickupLng: q.pickup.lng,
                       destinationLat: q.destination.lat,
                       destinationLng: q.destination.lng,
+
                       pickupLabel,
                       destinationLabel,
-                      fare: q.fare,
 
-                      bookedFor: !!q.passengerPreview?.bookedFor,
-                      riderName: q.passengerPreview?.bookedFor ? q.passengerPreview?.name || "Rider" : "",
-                      riderPhone: "",
+                      fare: Number(q.fare || 0),
+                      fareBreakdown: q.fareBreakdown || null,
 
-                      passengerName: q.passengerPreview?.name || "Passenger",
-                      displayName:
-                        q.passengerPreview?.bookedFor && q.passengerPreview?.name
-                          ? q.passengerPreview.name
-                          : q.passengerPreview?.name || "Passenger",
+                      bookedFor,
+                      riderName,
+                      riderPhone: q.passengerPreview?.riderPhone || "",
+
+                      passengerName: accountName,
+                      displayName,
 
                       status: "pending",
-                      bookingType: q.bookingType,
+                      bookingType: q.bookingType || "CLASSIC",
                       partySize: q.partySize || 1,
-                    });
+                    };
+
+                    setPreviewBooking(preview);
+
+                    mapRef.current?.postMessage(
+                      JSON.stringify({
+                        type: "setPassengerMarkers",
+                        pickup: {
+                          latitude: preview.pickupLat,
+                          longitude: preview.pickupLng,
+                        },
+                        destination: {
+                          latitude: preview.destinationLat,
+                          longitude: preview.destinationLng,
+                        },
+                        pickupLabel: "Passenger",
+                        destinationLabel: "Destination",
+                        fit: true,
+                      })
+                    );
+
+                    mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
                   })();
                 }
+
                 return;
               }
-              Alert.alert("Map error", msg.error);
-            } catch {}
+
+              // Ignore normal/internal map messages that are not errors.
+              return;
+            } catch (err) {
+              console.log("[DHOME:mapMessage] invalid message:", e.nativeEvent.data);
+            }
           }}
         />
       )}
@@ -1566,7 +2509,23 @@ export default function DHome() {
       )}
 
 
-      <PreviewBookingCard previewBooking={previewBooking} onAccept={acceptPreview} onClose={() => setPreviewBooking(null)} />
+      <PreviewBookingCard
+        previewBooking={previewBooking}
+        onAccept={acceptPreview}
+        onClose={() => {
+          setPreviewBooking(null);
+
+          mapRef.current?.postMessage(
+            JSON.stringify({
+              type: "setPassengerMarkers",
+              pickup: null,
+              destination: null,
+            })
+          );
+
+          mapRef.current?.postMessage(JSON.stringify({ type: "clearRoute" }));
+        }}
+      />
 
       {showIncomingCard && (
         <IncomingBookingCard
@@ -1580,7 +2539,7 @@ export default function DHome() {
       )}
       {minimized && (
         <TouchableOpacity style={styles.minimizedButton} onPress={() => setMinimized(false)}>
-          <Text>🔍 View Booking Info</Text>
+          <Text>View Payment Info</Text>
         </TouchableOpacity>
       )}
 
@@ -1589,6 +2548,7 @@ export default function DHome() {
           <PaymentCard
             showGcashQR={!!showGcashQR}
             gcashQrUrl={focusedBooking?.driverPayment?.qrUrl}
+            booking={focusedBooking}
             onChat={() => openChatForBooking(focusedBooking)}
             onConfirmPayment={handleConfirmPayment}
             onMinimize={() => setMinimized(true)}
@@ -1633,7 +2593,7 @@ const styles = StyleSheet.create({
   capText: { color: "#fff", fontWeight: "600" },
   minimizedButton: {
     position: "absolute",
-    bottom: 80,
+    bottom: 100,
     left: 20,
     backgroundColor: "white",
     padding: 10,

@@ -37,9 +37,6 @@ export default function DChats() {
     try {
       todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
     } catch (e) {
-      console.log("AUTH:DCHATS:getResolvedDriverSession:parse_failed", {
-        rawTodaAuth,
-      });
     }
 
     const resolvedDriverId =
@@ -52,17 +49,6 @@ export default function DChats() {
       rawToken ||
       todaAuth?.token ||
       null;
-
-    console.log("AUTH:DCHATS:getResolvedDriverSession:resolved", {
-      rawDriverId,
-      hasRawToken: !!rawToken,
-      hasTodaAuth: !!rawTodaAuth,
-      todaAuthUserId: todaAuth?.userId ?? null,
-      todaAuthDriverId: todaAuth?.driverId ?? null,
-      hasTodaAuthToken: !!todaAuth?.token,
-      resolvedDriverId,
-      hasToken: !!resolvedToken,
-    });
 
     return {
       driverId:

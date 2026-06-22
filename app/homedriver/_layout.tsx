@@ -17,8 +17,6 @@ import GCashSettings from "./gcashsettings";
 import GCTutorial from "./gcatutorial";
 import DNotifications from "./dnotifications";
 import DNotifDetails from "./dnotifdetails";
-
-// ✅ NEW: President tools page (frontend only for now)
 import DPresident from "./dpresident";
 
 const Tab = createBottomTabNavigator();
@@ -33,8 +31,19 @@ function DriverTabs() {
 
   const fetchUnseenCount = useCallback(async () => {
     try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      const token = await AsyncStorage.getItem("driverToken"); // ✅ driverToken
+      const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+        AsyncStorage.getItem("driverId"),
+        AsyncStorage.getItem("token"),
+        AsyncStorage.getItem("toda.auth"),
+      ]);
+
+      let todaAuth: any = null;
+      try {
+        todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+      } catch {}
+
+      const driverId = rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+      const token = rawToken || todaAuth?.token || null;
 
       if (!driverId || !token) {
         setUnseenCount(0);
@@ -68,17 +77,28 @@ function DriverTabs() {
   // ✅ NEW: fetch president role (safe now; backend route later)
   const fetchPresidentRole = useCallback(async () => {
     try {
-      const driverId = await AsyncStorage.getItem("driverId");
-      const token = await AsyncStorage.getItem("driverToken");
+      const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+        AsyncStorage.getItem("driverId"),
+        AsyncStorage.getItem("token"),
+        AsyncStorage.getItem("toda.auth"),
+      ]);
+
+      let todaAuth: any = null;
+      try {
+        todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+      } catch {}
+
+      const driverId = rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+      const token = rawToken || todaAuth?.token || null;
 
       if (!driverId || !token) {
         setIsPresident(false);
         setTodaPresName("");
+        await AsyncStorage.multiRemove(["driverIsPresident", "driverTodaPresName"]);
         return;
       }
 
-      // ✅ If you later decide to cache these in AsyncStorage at login,
-      // this will instantly work without backend.
+
       const cachedIsPres = await AsyncStorage.getItem("driverIsPresident");
       const cachedTodaPres = await AsyncStorage.getItem("driverTodaPresName");
       if (cachedIsPres != null) {
@@ -87,25 +107,32 @@ function DriverTabs() {
         // still try backend quietly (optional)
       }
 
-      // 🔌 Backend endpoint for later:
-      // We’ll implement this later, but calling it now is safe.
-      // Expected response example:
-      // { ok:true, driver:{ isPresident:true, todaPresName:"..." } }
-      const res = await fetch(`${API_BASE_URL}/api/driver/${driverId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/president/me`, {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!res.ok) {
-        // if route not yet created, don’t break UI
+        // not a president (403) or not authorized
+        setIsPresident(false);
+        setTodaPresName("");
+
+        await AsyncStorage.multiRemove(["driverIsPresident", "driverTodaPresName"]);
         return;
       }
 
       const data = await res.json().catch(() => ({}));
-      const drv = data?.driver || data || {};
+      const pres = data?.president || {};
 
-      const nextIsPres = !!drv.isPresident;
-      const nextToda = String(drv.todaPresName || "").trim();
+      const nextIsPres = true;
+      const nextToda = String(pres?.todaPresName || "").trim();
+
+      setIsPresident(nextIsPres);
+      setTodaPresName(nextToda);
+
+      // cache
+      await AsyncStorage.setItem("driverIsPresident", "true");
+      await AsyncStorage.setItem("driverTodaPresName", nextToda);
 
       setIsPresident(nextIsPres);
       setTodaPresName(nextToda);

@@ -105,6 +105,27 @@ function formatDateTime(s?: string) {
   return d.toLocaleString();
 }
 
+async function getResolvedDriverSession() {
+  const [rawDriverId, rawToken, rawTodaAuth] = await Promise.all([
+    AsyncStorage.getItem("driverId"),
+    AsyncStorage.getItem("token"),
+    AsyncStorage.getItem("toda.auth"),
+  ]);
+
+  let todaAuth: any = null;
+  try {
+    todaAuth = rawTodaAuth ? JSON.parse(rawTodaAuth) : null;
+  } catch {}
+
+  const driverId = rawDriverId || todaAuth?.userId || todaAuth?.driverId || null;
+  const token = rawToken || todaAuth?.token || null;
+
+  return {
+    driverId: driverId ? String(driverId) : null,
+    token: token ? String(token) : null,
+  };
+}
+
 export default function DPresident() {
   const [mode, setMode] = useState<Mode>("drivers");
   const [q, setQ] = useState("");
@@ -134,7 +155,9 @@ export default function DPresident() {
       setLoading(true);
       setError(null);
 
-      const token = await AsyncStorage.getItem("driverToken");
+      const session = await getResolvedDriverSession();
+      const token = session.token;
+
       if (!token) {
         setItems([]);
         setError("Missing driver token. Please login again.");
@@ -184,13 +207,19 @@ export default function DPresident() {
     try {
       setProfileLoading(true);
 
-      const token = await AsyncStorage.getItem("driverToken");
+      const session = await getResolvedDriverSession();
+      const token = session.token;
+
+      if (!token) {
+        setProfileError("Missing driver token. Please login again.");
+        return;
+      }
 
       const res = await fetch(
-        `${API_BASE_URL}/api/driver/${encodeURIComponent(row.id)}`,
+        `${API_BASE_URL}/api/president/driver/${encodeURIComponent(row.id)}`,
         {
           method: "GET",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: { Authorization: `Bearer ${token}` },
         }
       );
 
@@ -217,7 +246,8 @@ export default function DPresident() {
   const onAdd = useCallback(
     async (driverId: string, name: string) => {
       try {
-        const token = await AsyncStorage.getItem("driverToken");
+        const session = await getResolvedDriverSession();
+        const token = session.token;
         if (!token) return Alert.alert("Error", "Missing driver token.");
 
         Alert.alert("Add Member", `Add "${name}" to your TODA?`, [
@@ -262,7 +292,8 @@ export default function DPresident() {
   const onKick = useCallback(
     async (driverId: string, name: string) => {
       try {
-        const token = await AsyncStorage.getItem("driverToken");
+        const session = await getResolvedDriverSession();
+        const token = session.token;
         if (!token) return Alert.alert("Error", "Missing driver token.");
 
         Alert.alert("Kick Member", `Remove "${name}" from your TODA?`, [

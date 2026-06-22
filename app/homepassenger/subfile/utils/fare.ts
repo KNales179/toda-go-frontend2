@@ -23,6 +23,8 @@ export type FareConfigState = {
   };
 };
 
+// UI ESTIMATE ONLY:
+// Final fare must be recomputed and saved by the backend during /api/book.
 export function calculateFare(
   distanceKm: number,
   discount: DiscountType = "none",
@@ -35,7 +37,8 @@ export function calculateFare(
   if (!isFinite(distanceKm) || distanceKm <= 0) return 0;
 
   const bookingType = opts?.bookingType ?? "CLASSIC";
-  const partySize = opts?.partySize ?? 1;
+  const rawPartySize = opts?.partySize ?? 1;
+  const partySize = bookingType === "GROUP" ? Math.max(1, rawPartySize) : 1;
   const cfg = opts?.config;
 
   // ✅ Use FareConfig if available
@@ -68,6 +71,10 @@ export function calculateFare(
 
     let fare = fareBase;
 
+    if (chargeMode === "per_passenger") {
+      fare *= partySize;
+    }
+
     // discount (no change from your logic)
     if (
       cfg.discounts?.enabled &&
@@ -82,16 +89,7 @@ export function calculateFare(
     return Math.round(fare);
   }
 
-  // 🔙 Fallback: old hardcoded logic
-  const BASE_FARE = 20;
-  const INCLUDED_KM = 2;
-  const PER_KM = 5;
-
-  const extra = Math.max(0, distanceKm - INCLUDED_KM);
-  const steps = Math.ceil(extra);
-
-  let fare = BASE_FARE + steps * PER_KM;
-  if (discount !== "none") fare *= 0.8;
-
-  return Math.round(fare);
+  // No fare config loaded yet.
+  // Frontend estimate must rely on fare config from backend, not hardcoded values.
+  return 0;
 }

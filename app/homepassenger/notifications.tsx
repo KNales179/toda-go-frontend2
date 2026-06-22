@@ -36,6 +36,8 @@ export default function NotificationsScreen() {
 
         const passengerId = await AsyncStorage.getItem("passengerId");
         const token = await AsyncStorage.getItem("token");
+        console.log("[NOTIFS] passengerId =", passengerId);
+        console.log("[NOTIFS] token exists =", !!token);
 
         if (!passengerId) {
           console.log("❌ [NOTIFS] Missing passengerId");

@@ -1,4 +1,3 @@
-// homepassenger/subfile/PassengerReportModal.tsx
 import React from "react";
 import {
   View,
@@ -6,6 +5,7 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -42,65 +42,69 @@ const PassengerReportModal: React.FC<Props> = ({
 
   return (
     <View style={styles.ratingModalOverlay}>
-      <View style={[styles.ratingModal, { alignItems: "stretch" }]}>
+      <View style={styles.ratingModal}>
         <TouchableOpacity style={styles.dismissButton} onPress={onClose}>
           <Ionicons name="close" size={24} color="gray" />
         </TouchableOpacity>
 
-        <Text style={styles.modalTitle}>Report Driver</Text>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.modalTitle}>Report Driver</Text>
 
-        <Text style={styles.modalLabel}>Select Report Type:</Text>
-        <View style={styles.dropdownContainer}>
-          <TouchableOpacity
-            style={styles.dropdownButton}
-            onPress={() => setShowDropdown(!showDropdown)}
-          >
-            <Text style={{ color: reportType ? "#000" : "#999" }}>
-              {reportType || "Select a violation"}
-            </Text>
-            <Ionicons
-              name={showDropdown ? "chevron-up" : "chevron-down"}
-              size={20}
-              color="#999"
-            />
-          </TouchableOpacity>
+          <Text style={styles.modalLabel}>Select Report Type:</Text>
+          <View style={styles.dropdownContainer}>
+            <TouchableOpacity
+              style={styles.dropdownButton}
+              onPress={() => setShowDropdown(!showDropdown)}
+            >
+              <Text style={{ color: reportType ? "#000" : "#999" }}>
+                {reportType || "Select a violation"}
+              </Text>
+              <Ionicons
+                name={showDropdown ? "chevron-up" : "chevron-down"}
+                size={20}
+                color="#999"
+              />
+            </TouchableOpacity>
 
-          {showDropdown && (
-            <View style={styles.dropdownMenu}>
-              {REPORT_OPTIONS.map((option) => (
-                <TouchableOpacity
-                  key={option}
-                  style={styles.dropdownItem}
-                  onPress={() => {
-                    setReportType(option);
-                    setShowDropdown(false);
-                  }}
-                >
-                  <Text style={{ color: "#000" }}>{option}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
+            {showDropdown && (
+              <View style={styles.dropdownMenu}>
+                {REPORT_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      setReportType(option);
+                      setShowDropdown(false);
+                    }}
+                  >
+                    <Text style={{ color: "#000" }}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
 
-        {reportType === "Other" && (
+          <Text style={styles.modalLabel}>Description / Additional Details:</Text>
           <TextInput
             style={styles.feedbackInput}
-            placeholder="Describe the issue"
+            placeholder="Describe the issue or add more details"
             placeholderTextColor="#A0A0A0"
             multiline
-            numberOfLines={3}
+            numberOfLines={4}
             value={otherReport}
             onChangeText={setOtherReport}
           />
-        )}
 
-        <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: "#4CAF50" }]}
-          onPress={onSubmit}
-        >
-          <Text style={styles.submitButtonText}>Submit Report</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.submitButton}
+            onPress={onSubmit}
+          >
+            <Text style={styles.submitButtonText}>Submit Report</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
     </View>
   );
@@ -110,27 +114,47 @@ export default PassengerReportModal;
 
 const styles = StyleSheet.create({
   ratingModalOverlay: {
-    position: "absolute",
-    top: -100,
-    left: 0,
-    right: 0,
-    bottom: 10,
+    ...StyleSheet.absoluteFillObject,
+    bottom:-100,
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
-    zIndex: 999,
+    zIndex: 9999,
+    paddingHorizontal: 20,
+    paddingVertical: 40,
   },
   ratingModal: {
-    width: "80%",
+    width: "100%",
+    maxWidth: 360,
+    maxHeight: "85%",
     backgroundColor: "#fff",
     borderRadius: 10,
     padding: 20,
-    alignItems: "center",
+    alignItems: "stretch",
   },
-  dismissButton: { position: "absolute", top: 10, right: 10, zIndex: 10 },
-  modalTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 5 },
-  modalLabel: { marginTop: 5, marginBottom: 5, fontSize: 14, color: "#333", fontWeight: "500" },
-  dropdownContainer: { width: "100%", marginVertical: 5 },
+  dismissButton: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    zIndex: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 5,
+    paddingRight: 28,
+  },
+  modalLabel: {
+    marginTop: 5,
+    marginBottom: 5,
+    fontSize: 14,
+    color: "#333",
+    fontWeight: "500",
+  },
+  dropdownContainer: {
+    width: "100%",
+    marginVertical: 5,
+  },
   dropdownButton: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -148,7 +172,9 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     marginTop: 2,
   },
-  dropdownItem: { padding: 10 },
+  dropdownItem: {
+    padding: 10,
+  },
   feedbackInput: {
     width: "100%",
     borderWidth: 1,
@@ -157,12 +183,18 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 10,
     textAlignVertical: "top",
+    minHeight: 90,
   },
   submitButton: {
-    backgroundColor: "#4caf50",
+    backgroundColor: "#4CAF50",
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
+    marginTop: 8,
   },
-  submitButtonText: { color: "#fff", fontWeight: "bold" },
+  submitButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    textAlign: "center",
+  },
 });

@@ -271,8 +271,7 @@ export default function PHistory() {
     try {
       const base = API_BASE_URL.replace(/\/$/, "");
       const paths = [
-        `/rides`,
-        `/api/rides`,
+        `/api/ridehistory`,
       ];
       let got: RideItem[] | null = null;
 
@@ -532,16 +531,14 @@ export default function PHistory() {
                 </View>
               )}
             </View>
-
-            {reportType === "Other" && (
-              <TextInput
-                style={styles.feedbackInput}
-                placeholder="Describe the issue"
-                placeholderTextColor="#A0A0A0"
-                multiline numberOfLines={3}
-                value={otherReport} onChangeText={setOtherReport}
-              />
-            )}
+            <Text style={styles.modalLabel}>Description / Additional Details:</Text>
+            <TextInput
+              style={styles.feedbackInput}
+              placeholder="Describe the issue"
+              placeholderTextColor="#A0A0A0"
+              multiline numberOfLines={3}
+              value={otherReport} onChangeText={setOtherReport}
+            />
 
             <TouchableOpacity
               style={[styles.submitButton, { backgroundColor: "#4CAF50", opacity: sendingReport ? 0.6 : 1 }]}
@@ -620,13 +617,11 @@ function HistoryCard({
 
       {expanded && (
         <View style={styles.expandBox}>
-          <Text style={styles.expandTitle}>Driver: <Text style={{ fontWeight: "600" }}>{item.driverName || "—"}</Text></Text>
-          {!!item.notes && <Text style={styles.expandNote} numberOfLines={4}>Note: {item.notes}</Text>}
-
+          {!!item.paymentMethod && <Text style={styles.meta}>Payment: {item.paymentMethod}</Text>}
           <View style={styles.expandFooter}>
             <View style={{ flex: 1 }}>
-              {!!item.bookingId && <Text style={styles.meta}>Booking: {item.bookingId}</Text>}
-              {!!item.paymentMethod && <Text style={styles.meta}>Payment: {item.paymentMethod}</Text>}
+              <Text style={styles.expandTitle}>Driver: <Text style={{ fontWeight: "600" }}>{item.driverName || "—"}</Text></Text>
+              {!!item.notes && <Text style={styles.expandNote} numberOfLines={4}>Note: {item.notes}</Text>}
             </View>
             <View style={styles.actionsRow}>
               <TouchableOpacity onPress={onReport} style={styles.warnBtn}>

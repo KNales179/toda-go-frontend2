@@ -2,9 +2,9 @@
   "expo": {
     "name": "Toda-Go",
     "slug": "toda-go",
-    "version": "1.1.0",
+    "version": "2.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/TODAGO_logo.png",
+    "icon": "./assets/images/logo.png",
     "scheme": "todago",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -20,9 +20,10 @@
       }
     },
     "android": {
+      "softwareKeyboardLayoutMode": "pan",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/TODAGO_logo.png",
+        "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#000000"
       },
       "googleServicesFile": "./google-services.json",
@@ -33,7 +34,9 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "INTERNET",
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -43,28 +46,35 @@
     },
     "plugins": [
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow TODA Go to access your camera for driver face verification."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
-          "image": "./assets/images/TODAGO_logo.png",
+          "image": "./assets/images/logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "react-native-vision-camera"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "splash": {
-      "image": "./assets/images/TODAGO_logo.png",
+      "image": "./assets/images/logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#000000"
     },
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "2a0efcc0-d891-4969-9aa1-318cd38d85a6"
+        "projectId": "e1c91c65-f43d-4b8c-87aa-3bc12c76b326"
       }
     }
   }

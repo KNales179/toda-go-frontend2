@@ -184,7 +184,12 @@ export default function PwAppPanel({
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 12, elevation: 2, bottom: -80},
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 16,
+    elevation: 6,
+  },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { fontSize: 16, fontWeight: "800" },
   count: { fontSize: 12, color: "#6b7280" },
