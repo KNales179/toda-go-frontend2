@@ -11,7 +11,7 @@ import * as NavigationBar from "expo-navigation-bar";
 //   { source, message, extra }
 async function debugLog(message: string, extra?: any) {
   try {
-    await fetch("https://api-node-mtd3.onrender.com/api/debug-log", {
+    await fetch("https://api-tg-be.onrender.com/api/debug-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
