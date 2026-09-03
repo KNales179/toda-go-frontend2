@@ -1,77 +1,86 @@
-# TODA-Go Frontend
+# TODA-Go
 
-Frontend application for **TODA-Go**, a digital platform developed to support tricycle transportation and regulatory operations.
+TODA-Go is a mobile application developed as part of a digital tricycle transportation platform. It provides a mobile interface for users to access transportation-related services and interact with the TODA-Go system.
 
-The application provides the client-side interface for interacting with TODA-Go services, communicating with backend APIs, and presenting functionality based on user roles and system permissions.
+The application is built with React Native and Expo, with supporting services for location, mapping, notifications, media, authentication, and real-time communication.
 
 ## Overview
 
-TODA-Go was developed to improve the management and accessibility of tricycle transportation services through a centralized digital platform.
+The application was developed to provide a mobile-first experience for tricycle transportation services.
 
-The frontend is responsible for the presentation layer of the system, including user interfaces, client-side state, API communication, authentication flows, and role-specific functionality.
+It integrates with backend services through APIs and uses device capabilities such as location, camera, file storage, notifications, and media access to support its functionality.
 
-## Features
+## Technology Stack
 
-* User authentication
-* Role-based interfaces
-* Driver and vehicle information
-* Ride-related functionality
-* Administrative interfaces
-* API integration
-* Responsive user interface
-* Form handling and validation
-* Client-side authentication state
-* Protected application routes
+### Mobile
 
-## Tech Stack
+* React Native
+* Expo
+* TypeScript
+* Expo Router
+* React Navigation
 
-### Frontend
+### Maps & Location
 
-* React
-* JavaScript / TypeScript
-* Vite
-* Tailwind CSS
+* React Native Maps
+* Expo Location
 
-### Backend Integration
+### Backend & Communication
 
-* REST API
-* JSON
-* JWT authentication
+* Axios
+* Socket.IO Client
+* Firebase
 
-### Development Tools
+### Device & Media
 
-* Git
-* GitHub
-* npm
+* Expo Camera
+* React Native Vision Camera
+* Expo Image Picker
+* Expo Media Library
+* Expo File System
+* Expo Notifications
+* Expo Clipboard
+* Expo Haptics
+* Expo Brightness
+
+### UI & Device Integration
+
+* React Native SVG
+* Expo Blur
+* React Native Reanimated
+* React Native Gesture Handler
+* React Native Safe Area Context
+* React Native WebView
+
+### Development & Testing
+
+* Jest
+* Jest Expo
+* TypeScript
 * ESLint
+* Yarn
 
-## Project Structure
+## Requirements
+
+Before running the project, make sure the following are installed:
+
+* Node.js 18 or later, below version 21
+* Yarn 1.22.22
+* Expo development environment
+* Android Studio for Android development
+* Xcode for iOS development
+
+The project currently uses:
 
 ```text
-src/
-├── assets/          # Static assets
-├── components/      # Reusable UI components
-├── pages/           # Application pages
-├── layouts/         # Shared layouts
-├── services/        # API and external service integration
-├── hooks/           # Custom React hooks
-├── utils/           # Utility functions
-├── types/           # Type definitions
-├── App.*            # Application configuration
-└── main.*           # Application entry point
+Node.js >=18 <21
+Yarn 1.22.22
+Expo ~53
+React Native 0.79.6
+React 19
 ```
 
-The exact structure may vary depending on the current implementation.
-
 ## Getting Started
-
-### Prerequisites
-
-* Node.js
-* npm
-* Git
-
-### Installation
 
 Clone the repository:
 
@@ -79,80 +88,106 @@ Clone the repository:
 git clone <repository-url>
 ```
 
-Navigate to the project directory:
+Navigate to the project:
 
 ```bash
-cd <repository-folder>
+cd toda-go
 ```
 
 Install dependencies:
 
 ```bash
-npm install
+yarn install
 ```
 
-### Environment Configuration
-
-Create a `.env` file in the project root and configure the required environment variables.
-
-Example:
-
-```env
-VITE_API_URL=http://localhost:5000
-```
-
-Use the appropriate backend URL for the environment being used.
-
-Environment files containing credentials or private configuration should not be committed to the repository.
-
-### Development
-
-Start the development server:
+Start the Expo development server:
 
 ```bash
-npm run dev
+yarn start
 ```
 
-Vite will provide the local development address in the terminal.
+## Running the Application
 
-### Production Build
-
-Create a production build:
+### Android
 
 ```bash
-npm run build
+yarn android
 ```
 
-To preview the production build locally:
+### iOS
 
 ```bash
-npm run preview
+yarn ios
 ```
+
+### Web
+
+```bash
+yarn web
+```
+
+The primary target of the project is mobile. Web support is available through Expo but is not the primary platform of the application.
+
+## Testing
+
+The project uses Jest with the Expo testing preset.
+
+Run the test suite with:
+
+```bash
+yarn test
+```
+
+## Linting
+
+Run the project's linting configuration with:
+
+```bash
+yarn lint
+```
+
+## Project Configuration
+
+The application uses Expo Router as its entry point:
+
+```text
+expo-router/entry
+```
+
+Application configuration, platform settings, permissions, assets, and other Expo-specific settings are managed through the project's Expo configuration.
+
+## Development
+
+The application communicates with external backend services and makes use of device capabilities depending on the functionality being accessed.
+
+Development configuration and environment-specific values should be kept outside the source code where appropriate.
+
+Do not commit:
+
+* API keys
+* Authentication secrets
+* Firebase credentials
+* Private service configuration
+* Production credentials
+* Other sensitive environment-specific values
 
 ## Related Components
 
-TODA-Go is composed of multiple system components:
+TODA-Go is part of a larger system consisting of multiple components, including mobile and administrative applications and their supporting backend services.
 
-* **TODA-Go Frontend** — Client-facing web application
-* **TODA-Go Admin** — Administrative and regulatory management interface
-* **TODA-Go Backend** — REST API and server-side services
-* **TODA-Go Mobile** — Mobile application for supported transportation workflows
-
-## Development Notes
-
-This repository is maintained primarily as a portfolio and project demonstration.
-
-The source code is publicly visible to allow the implementation, architecture, and development work to be reviewed. Sensitive configuration, credentials, private keys, and deployment secrets are excluded from the repository.
+The mobile application communicates with the system's backend services through APIs and real-time connections where required.
 
 ## License
 
 ### Proprietary — All Rights Reserved
 
-This repository is publicly available for **portfolio, educational, and demonstration purposes**.
+This repository is publicly available for **portfolio, educational, demonstration, and evaluation purposes**.
 
 No permission is granted to copy, modify, reproduce, distribute, sublicense, publish, or use the source code or substantial portions of it for another project without prior written permission from the copyright holder.
 
 Viewing and evaluating the source code through this repository does not grant ownership or any additional rights to the software.
+
+Third-party libraries and dependencies included in or used by this project remain subject to their respective licenses.
 
 For permission to use any portion of this project beyond viewing and evaluation, contact the copyright holder.
 
