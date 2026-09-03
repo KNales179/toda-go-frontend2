@@ -6,11 +6,11 @@ This software and its source code are proprietary and are provided publicly thro
 
 ## Permissions
 
-You are permitted to:
+You may:
 
 * View and inspect the source code.
 * Evaluate the implementation for educational or professional assessment.
-* Reference the project as a portfolio work of the author.
+* Reference the project as part of a portfolio or professional evaluation.
 
 ## Restrictions
 
@@ -21,25 +21,25 @@ Without prior written permission from the copyright holder, you may not:
 * Redistribute or republish the source code.
 * Incorporate the source code into another project.
 * Use the source code or substantial portions of it for commercial purposes.
-* Sublicense, sell, or otherwise transfer rights to the source code.
-* Present the source code or substantial portions of it as your own work.
+* Sublicense, sell, or transfer rights to the source code.
+* Claim the source code or substantial portions of it as your own work.
 
-Public availability of this repository does not constitute a grant of permission to use, reproduce, modify, or distribute the software.
+Public availability of this repository does not grant permission to use, reproduce, modify, or distribute the software.
 
-## Third-Party Dependencies
+## Third-Party Components
 
 This license applies only to the original source code and materials contained in this repository that are owned by the copyright holder.
 
-Third-party libraries, frameworks, assets, fonts, and other dependencies remain subject to their respective licenses and terms.
+Third-party libraries, frameworks, packages, assets, and other dependencies remain subject to their respective licenses and terms.
 
 ## No Warranty
 
-The software is provided for demonstration and educational purposes "as is", without warranty of any kind, express or implied.
+The software is provided "as is", without warranty of any kind, express or implied.
 
-The copyright holder shall not be liable for any claim, damages, or other liability arising from the use of this software.
+The copyright holder shall not be liable for any claim, damages, or other liability arising from the use of the software.
 
-## Copyright
+## Reservation of Rights
 
 All rights not expressly granted under this license are reserved by the copyright holder.
 
-For permissions or licensing inquiries, contact the copyright holder.
+For licensing or permission inquiries, contact the copyright holder.
